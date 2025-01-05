@@ -1,0 +1,42 @@
+/* Admin styles */
+.wrap {
+    max-width: 1200px;
+}
+
+.form-table th {
+    width: 200px;
+}
+
+.form-table td {
+    position: relative;
+}
+
+.form-table .description {
+    margin-top: 5px;
+    color: #666;
+}
+
+/* Settings page styles */
+.wp-bedrock-settings input[type="text"],
+.wp-bedrock-settings input[type="password"],
+.wp-bedrock-settings select,
+.wp-bedrock-settings textarea {
+    width: 400px;
+    max-width: 100%;
+}
+
+.wp-bedrock-settings input[type="number"] {
+    width: 100px;
+}
+
+/* Error messages */
+.wp-bedrock-error {
+    color: #dc3232;
+    margin-top: 5px;
+}
+
+/* Success messages */
+.wp-bedrock-success {
+    color: #46b450;
+    margin-top: 5px;
+}

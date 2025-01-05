@@ -1,0 +1,13 @@
+{
+    "name": "wpbedrock/wp-bedrock",
+    "description": "WordPress plugin for Amazon Bedrock AI integration",
+    "type": "wordpress-plugin",
+    "require": {
+        "aws/aws-sdk-php": "^3.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "WPBEDROCK\\": "includes/"
+        }
+    }
+}

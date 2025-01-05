@@ -1,0 +1,92 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: WP Bedrock AI 1.0.0\n"
+"Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/wp-bedrock\n"
+"POT-Creation-Date: 2024-01-01T00:00:00+00:00\n"
+"PO-Revision-Date: 2024-01-01 00:00:00+0000\n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Language: zh_CN\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"X-Generator: Poedit 3.0\n"
+
+msgid "About WP Bedrock"
+msgstr "关于 WP Bedrock"
+
+msgid "WP Bedrock is a powerful WordPress plugin that integrates Amazon Bedrock AI capabilities into your WordPress site. It provides an intelligent chatbot that can assist your visitors with questions and information."
+msgstr "WP Bedrock 是一个强大的 WordPress 插件，它将 Amazon Bedrock AI 功能集成到您的 WordPress 网站中。它提供了一个智能聊天机器人，可以帮助访客解答问题并提供信息。"
+
+msgid "Key Features"
+msgstr "主要功能"
+
+msgid "Real-time AI Chat: Engage with visitors through a responsive chatbot interface"
+msgstr "实时 AI 聊天：通过响应式聊天机器人界面与访客互动"
+
+msgid "Streaming Responses: See AI responses appear in real-time with typewriter effect"
+msgstr "流式响应：实时查看带有打字机效果的 AI 回复"
+
+msgid "Amazon Bedrock Integration: Powered by advanced AI models like Claude"
+msgstr "Amazon Bedrock 集成：由 Claude 等先进 AI 模型提供支持"
+
+msgid "Chat History: Keep track of all conversations for future reference"
+msgstr "聊天历史：记录所有对话以供将来参考"
+
+msgid "Customizable Settings: Configure the chatbot behavior to suit your needs"
+msgstr "自定义设置：根据需求配置聊天机器人行为"
+
+msgid "Quick Start Guide"
+msgstr "快速入门指南"
+
+msgid "Configure AWS Credentials"
+msgstr "配置 AWS 凭证"
+
+msgid "Enter your AWS access key and secret in the Settings page"
+msgstr "在设置页面输入您的 AWS 访问密钥和密钥"
+
+msgid "Choose AI Model"
+msgstr "选择 AI 模型"
+
+msgid "Select your preferred Bedrock AI model from the available options"
+msgstr "从可用选项中选择您偏好的 Bedrock AI 模型"
+
+msgid "Test the Chatbot"
+msgstr "测试聊天机器人"
+
+msgid "Use the Chatbot page to test the functionality"
+msgstr "使用聊天机器人页面测试功能"
+
+msgid "Navigation"
+msgstr "导航"
+
+msgid "Settings"
+msgstr "设置"
+
+msgid "Configure AWS credentials and AI model settings"
+msgstr "配置 AWS 凭证和 AI 模型设置"
+
+msgid "Chatbot"
+msgstr "聊天机器人"
+
+msgid "Access the chat interface for testing and monitoring"
+msgstr "访问聊天界面进行测试和监控"
+
+msgid "Support & Documentation"
+msgstr "支持与文档"
+
+msgid "Current Version: %s"
+msgstr "当前版本：%s"
+
+msgid "For support and detailed documentation, please visit:"
+msgstr "获取支持和详细文档，请访问："
+
+msgid "GitHub Repository"
+msgstr "GitHub 仓库"
+
+msgid "WordPress Plugin Page"
+msgstr "WordPress 插件页面"
+
+msgid "WP Bedrock requires AWS SDK PHP. Please run composer install in the plugin directory."
+msgstr "WP Bedrock 需要 AWS SDK PHP。请在插件目录中运行 composer install。"

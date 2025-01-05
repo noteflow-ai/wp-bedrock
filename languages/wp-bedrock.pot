@@ -1,0 +1,117 @@
+# Copyright (C) 2024 glay
+# This file is distributed under the GPL-2.0+.
+msgid ""
+msgstr ""
+"Project-Id-Version: WP Bedrock AI 1.0.0\n"
+"Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/wp-bedrock\n"
+"POT-Creation-Date: 2024-01-01T00:00:00+00:00\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+
+#: admin/partials/wp-bedrock-admin-display.php:22
+msgid "About WP Bedrock"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:24
+msgid "WP Bedrock is a powerful WordPress plugin that integrates Amazon Bedrock AI capabilities into your WordPress site. It provides an intelligent chatbot that can assist your visitors with questions and information."
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:29
+msgid "Key Features"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:31
+msgid "Real-time AI Chat: Engage with visitors through a responsive chatbot interface"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:32
+msgid "Streaming Responses: See AI responses appear in real-time with typewriter effect"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:33
+msgid "Amazon Bedrock Integration: Powered by advanced AI models like Claude"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:34
+msgid "Chat History: Keep track of all conversations for future reference"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:35
+msgid "Customizable Settings: Configure the chatbot behavior to suit your needs"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:40
+msgid "Quick Start Guide"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:43
+msgid "Configure AWS Credentials"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:44
+msgid "Enter your AWS access key and secret in the Settings page"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:47
+msgid "Choose AI Model"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:48
+msgid "Select your preferred Bedrock AI model from the available options"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:51
+msgid "Test the Chatbot"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:52
+msgid "Use the Chatbot page to test the functionality"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:58
+msgid "Navigation"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:60
+msgid "Settings"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:60
+msgid "Configure AWS credentials and AI model settings"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:61
+msgid "Chatbot"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:61
+msgid "Access the chat interface for testing and monitoring"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:66
+msgid "Support & Documentation"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:71
+msgid "Current Version: %s"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:76
+msgid "For support and detailed documentation, please visit:"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:78
+msgid "GitHub Repository"
+msgstr ""
+
+#: admin/partials/wp-bedrock-admin-display.php:79
+msgid "WordPress Plugin Page"
+msgstr ""
+
+#: wp-bedrock.php:40
+msgid "WP Bedrock requires AWS SDK PHP. Please run composer install in the plugin directory."
+msgstr ""
