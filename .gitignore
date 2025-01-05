@@ -28,6 +28,11 @@ error_log
 access_log
 debug.log
 
-# Aws
+# AWS related
 /Aws/
 Aws/
+/GuzzleHttp/
+GuzzleHttp/
+/JmesPath/
+JmesPath/
+aws.zip
