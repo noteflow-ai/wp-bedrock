@@ -39,20 +39,27 @@ if (!defined('ABSPATH')) exit;
                 <td>
                     <select name="wpbedrock_model_id">
                         <!-- Claude 3 系列 -->
+                        <option value="anthropic.claude-3-opus-20240229-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'anthropic.claude-3-opus-20240229-v1:0'); ?>>Claude 3 Opus</option>
                         <option value="anthropic.claude-3-sonnet-20240229-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'anthropic.claude-3-sonnet-20240229-v1:0'); ?>>Claude 3 Sonnet</option>
                         <option value="anthropic.claude-3-haiku-20240307-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'anthropic.claude-3-haiku-20240307-v1:0'); ?>>Claude 3 Haiku</option>
+                        <option value="us.anthropic.claude-3-5-haiku-20241022-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.anthropic.claude-3-5-haiku-20241022-v1:0'); ?>>Claude 3.5 Haiku</option>
+                        <option value="us.anthropic.claude-3-5-sonnet-20241022-v2:0" <?php selected(get_option('wpbedrock_model_id'), 'us.anthropic.claude-3-5-sonnet-20241022-v2:0'); ?>>Claude 3.5 Sonnet</option>
 
                         <!-- AWS Nova 系列 -->
-                        <option value="amazon.titan-text-express-v1" <?php selected(get_option('wpbedrock_model_id'), 'amazon.titan-text-express-v1'); ?>>Titan Text Express</option>
-                        <option value="amazon.titan-text-lite-v1" <?php selected(get_option('wpbedrock_model_id'), 'amazon.titan-text-lite-v1'); ?>>Titan Text Lite</option>
+                        <option value="us.amazon.nova-micro-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.amazon.nova-micro-v1:0'); ?>>Nova Micro</option>
+                        <option value="us.amazon.nova-lite-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.amazon.nova-lite-v1:0'); ?>>Nova Lite</option>
+                        <option value="us.amazon.nova-pro-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.amazon.nova-pro-v1:0'); ?>>Nova Pro</option>
 
-                        <!-- Llama 系列 -->
-                        <option value="meta.llama3-v1" <?php selected(get_option('wpbedrock_model_id'), 'meta.llama3-v1'); ?>>Llama 3</option>
-                        <option value="meta.llama3-small-v1" <?php selected(get_option('wpbedrock_model_id'), 'meta.llama3-small-v1'); ?>>Llama 3 Small</option>
+                        <!-- Llama 3 系列 -->
+                        <option value="us.meta.llama3-1-8b-instruct-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.meta.llama3-1-8b-instruct-v1:0'); ?>>Llama 3 1.8B Instruct</option>
+                        <option value="us.meta.llama3-1-70b-instruct-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.meta.llama3-1-70b-instruct-v1:0'); ?>>Llama 3 1.70B Instruct</option>
+                        <option value="us.meta.llama3-2-11b-instruct-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.meta.llama3-2-11b-instruct-v1:0'); ?>>Llama 3 2.11B Instruct</option>
+                        <option value="us.meta.llama3-2-90b-instruct-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.meta.llama3-2-90b-instruct-v1:0'); ?>>Llama 3 2.90B Instruct</option>
+                        <option value="us.meta.llama3-3-70b-instruct-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.meta.llama3-3-70b-instruct-v1:0'); ?>>Llama 3 3.70B Instruct</option>
 
                         <!-- Mistral 系列 -->
-                        <option value="mistral.mistral-7b-v0:2" <?php selected(get_option('wpbedrock_model_id'), 'mistral.mistral-7b-v0:2'); ?>>Mistral 7B</option>
-                        <option value="mistral.mixtral-8x7b-v0:1" <?php selected(get_option('wpbedrock_model_id'), 'mistral.mixtral-8x7b-v0:1'); ?>>Mixtral 8x7B</option>
+                        <option value="mistral.mistral-large-2402-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'mistral.mistral-large-2402-v1:0'); ?>>Mistral Large 2402</option>
+                        <option value="mistral.mistral-large-2407-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'mistral.mistral-large-2407-v1:0'); ?>>Mistral Large 2407</option>
                     </select>
                 </td>
             </tr>

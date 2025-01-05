@@ -239,7 +239,7 @@ class WP_Bedrock_Admin {
             // 获取设置
             $aws_key = get_option('wpbedrock_aws_key');
             $aws_secret = get_option('wpbedrock_aws_secret');
-            $model_id = get_option('wpbedrock_model_id', 'anthropic.claude-3-haiku-20240307-v1:0');
+            $model_id = get_option('wpbedrock_model_id', 'anthropic.claude-3-haiku-20240307-v1:0'); // Default to Haiku as it's the most cost-effective
             $temperature = floatval(get_option('wpbedrock_temperature', '0.7'));
             $max_tokens = intval(get_option('wpbedrock_max_tokens', '2000'));
 
@@ -253,20 +253,31 @@ class WP_Bedrock_Admin {
             $bedrock = new \WPBEDROCK\WP_Bedrock_AWS($aws_key, $aws_secret, $aws_region);
 
             if ($is_stream) {
-                // 关闭所有输出缓冲
+                // Disable WordPress output buffering
+                remove_action('shutdown', 'wp_ob_end_flush_all', 1);
+                
+                // Clear any existing output buffers
                 while (ob_get_level() > 0) {
                     ob_end_clean();
                 }
 
-                // 设置必要的headers
-                header('Content-Type: text/event-stream');
-                header('Cache-Control: no-cache');
-                header('Cache-Control: private');
+                // Prevent WordPress from buffering
+                wp_ob_end_flush_all();
+                
+                // Set required headers
+                header('Content-Type: text/event-stream; charset=utf-8');
+                header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+                header('Cache-Control: post-check=0, pre-check=0', false);
+                header('Pragma: no-cache');
                 header('Content-Encoding: none');
                 header('Connection: keep-alive');
-                header('X-Accel-Buffering: no');
+                header('X-Accel-Buffering: no'); // Disable Nginx buffering
+                header('Access-Control-Allow-Origin: *'); // Allow CORS if needed
 
-                // Stream the response
+                // Flush headers immediately
+                flush();
+                
+                // Initialize streaming response
                 $bedrock->invoke_model(
                     $message, 
                     $model_id, 

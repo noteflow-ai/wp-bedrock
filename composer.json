@@ -3,7 +3,7 @@
     "description": "WordPress plugin for Amazon Bedrock AI integration",
     "type": "wordpress-plugin",
     "require": {
-        "aws/aws-sdk-php": "^3.0"
+        "aws/aws-sdk-php": "^3.336.5"
     },
     "autoload": {
         "psr-4": {
