@@ -27,3 +27,7 @@ wp-content/backups/
 error_log
 access_log
 debug.log
+
+# Aws
+/Aws/
+Aws/
