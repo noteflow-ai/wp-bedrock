@@ -3,13 +3,13 @@
  * The plugin bootstrap file
  *
  * @wordpress-plugin
- * Plugin Name:       WP Bedrock AI
+ * Plugin Name:       Bedrock AI Chat
  * Description:       WordPress plugin for Amazon Bedrock AI integration with conversation support
  * Version:          1.0.0
  * Author:           glay
  * License:          GPL-2.0+
  * License URI:      http://www.gnu.org/licenses/gpl-2.0.txt
- * Text Domain:      wp-bedrock
+ * Text Domain:      bedrock-ai-chat
  * Domain Path:      /languages
  */
 
@@ -34,7 +34,7 @@ if (!class_exists('Aws\Sdk')) {
     function wpbedrock_admin_notice_aws_sdk_missing() {
         ?>
         <div class="notice notice-error">
-            <p><?php _e('WP Bedrock requires AWS SDK PHP. Please run composer install in the plugin directory.', 'wp-bedrock'); ?></p>
+            <p><?php _e('WP Bedrock requires AWS SDK PHP. Please run composer install in the plugin directory.', 'bedrock-ai-chat'); ?></p>
         </div>
         <?php
     }
