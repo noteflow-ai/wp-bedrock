@@ -76,7 +76,7 @@ if (!defined('WPINC')) {
         <p>
             <?php _e('For support and detailed documentation, please visit:', 'wp-bedrock'); ?>
             <ul style="list-style: disc; margin-left: 20px;">
-                <li><a href="https://github.com/yourusername/wp-bedrock" target="_blank"><?php _e('GitHub Repository', 'wp-bedrock'); ?></a></li>
+                <li><a href="https://github.com/noteflow-ai/wp-bedrock" target="_blank"><?php _e('GitHub Repository', 'wp-bedrock'); ?></a></li>
                 <li><a href="https://wordpress.org/plugins/wp-bedrock" target="_blank"><?php _e('WordPress Plugin Page', 'wp-bedrock'); ?></a></li>
             </ul>
         </p>
