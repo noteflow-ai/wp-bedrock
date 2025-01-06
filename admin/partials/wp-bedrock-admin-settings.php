@@ -8,100 +8,280 @@ if (!defined('ABSPATH')) exit;
         settings_fields('wp-bedrock_settings');
         do_settings_sections('wp-bedrock_settings');
         ?>
+
+        <div class="wp-bedrock-settings-container">
+            <!-- AWS Credentials Section -->
+            <div class="settings-section">
+                <h2>AWS Credentials</h2>
+                <table class="form-table">
+                    <tr valign="top">
+                        <th scope="row">AWS Access Key</th>
+                        <td>
+                            <input type="text" name="wpbedrock_aws_key" value="<?php echo esc_attr(get_option('wpbedrock_aws_key')); ?>" class="regular-text" />
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row">AWS Secret Key</th>
+                        <td>
+                            <input type="password" name="wpbedrock_aws_secret" value="<?php echo esc_attr(get_option('wpbedrock_aws_secret')); ?>" class="regular-text" />
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row">AWS Region</th>
+                        <td>
+                            <select name="wpbedrock_aws_region">
+                                <option value="us-east-1" <?php selected(get_option('wpbedrock_aws_region'), 'us-east-1'); ?>>US East (N. Virginia)</option>
+                                <option value="us-west-2" <?php selected(get_option('wpbedrock_aws_region'), 'us-west-2'); ?>>US West (Oregon)</option>
+                                <option value="ap-northeast-1" <?php selected(get_option('wpbedrock_aws_region'), 'ap-northeast-1'); ?>>Asia Pacific (Tokyo)</option>
+                                <option value="ap-southeast-1" <?php selected(get_option('wpbedrock_aws_region'), 'ap-southeast-1'); ?>>Asia Pacific (Singapore)</option>
+                                <option value="eu-central-1" <?php selected(get_option('wpbedrock_aws_region'), 'eu-central-1'); ?>>Europe (Frankfurt)</option>
+                            </select>
+                            <p class="description">Select the AWS Bedrock region closest to your server</p>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+
+            <!-- Model Settings Section -->
+            <div class="settings-section">
+                <h2>Model Settings</h2>
+                <table class="form-table">
+                    <tr valign="top">
+                        <th scope="row">Default Model</th>
+                        <td>
+                            <select name="wpbedrock_model_id" class="widefat">
+                                <optgroup label="Claude 3">
+                                    <option value="anthropic.claude-3-haiku-20240307-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'anthropic.claude-3-haiku-20240307-v1:0'); ?>>Claude 3 Haiku - Fast and efficient</option>
+                                    <option value="anthropic.claude-3-5-haiku-20241022-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'anthropic.claude-3-5-haiku-20241022-v1:0'); ?>>Claude 3.5 Haiku - Enhanced efficiency</option>
+                                    <option value="anthropic.claude-3-sonnet-20240229-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'anthropic.claude-3-sonnet-20240229-v1:0'); ?>>Claude 3 Sonnet - Balanced performance</option>
+                                    <option value="anthropic.claude-3-5-sonnet-20241022-v2:0" <?php selected(get_option('wpbedrock_model_id'), 'anthropic.claude-3-5-sonnet-20241022-v2:0'); ?>>Claude 3.5 Sonnet - Enhanced balance</option>
+                                    <option value="anthropic.claude-3-opus-20240229-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'anthropic.claude-3-opus-20240229-v1:0'); ?>>Claude 3 Opus - Most capable</option>
+                                </optgroup>
+                                <optgroup label="AWS Nova">
+                                    <option value="us.amazon.nova-micro-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.amazon.nova-micro-v1:0'); ?>>Nova Micro - Most efficient</option>
+                                    <option value="us.amazon.nova-lite-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.amazon.nova-lite-v1:0'); ?>>Nova Lite - Cost effective</option>
+                                    <option value="us.amazon.nova-pro-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.amazon.nova-pro-v1:0'); ?>>Nova Pro - Most capable</option>
+                                </optgroup>
+                                <optgroup label="Meta Llama 3">
+                                    <option value="us.meta.llama3-1-8b-instruct-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.meta.llama3-1-8b-instruct-v1:0'); ?>>Llama 3 8B - Most efficient</option>
+                                    <option value="us.meta.llama3-1-70b-instruct-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.meta.llama3-1-70b-instruct-v1:0'); ?>>Llama 3 70B - Most capable</option>
+                                    <option value="us.meta.llama3-2-11b-instruct-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.meta.llama3-2-11b-instruct-v1:0'); ?>>Llama 3.2 11B - Balanced efficiency</option>
+                                    <option value="us.meta.llama3-2-90b-instruct-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.meta.llama3-2-90b-instruct-v1:0'); ?>>Llama 3.2 90B - Enhanced capability</option>
+                                    <option value="us.meta.llama3-3-70b-instruct-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.meta.llama3-3-70b-instruct-v1:0'); ?>>Llama 3.3 70B - Latest version</option>
+                                </optgroup>
+                                <optgroup label="Mistral">
+                                    <option value="mistral.mistral-large-2402-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'mistral.mistral-large-2402-v1:0'); ?>>Mistral Large 2402 - Latest version</option>
+                                    <option value="mistral.mistral-large-2407-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'mistral.mistral-large-2407-v1:0'); ?>>Mistral Large 2407 - Previous version</option>
+                                </optgroup>
+                            </select>
+                            <p class="description">Select the default model for new chat sessions</p>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row">Default Temperature</th>
+                        <td>
+                            <div class="temperature-control">
+                                <input type="range" name="wpbedrock_temperature" value="<?php echo esc_attr(get_option('wpbedrock_temperature', '0.7')); ?>" min="0" max="1" step="0.1" class="temperature-slider" />
+                                <span class="temperature-value"><?php echo esc_attr(get_option('wpbedrock_temperature', '0.7')); ?></span>
+                            </div>
+                            <p class="description">Controls randomness in responses (0 = focused, 1 = creative)</p>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row">Max Tokens</th>
+                        <td>
+                            <input type="number" name="wpbedrock_max_tokens" value="<?php echo esc_attr(get_option('wpbedrock_max_tokens', '2000')); ?>" class="small-text" min="1" max="4000" />
+                            <p class="description">Maximum length of generated responses</p>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+
+            <!-- Chat Settings Section -->
+            <div class="settings-section">
+                <h2>Image Generation Settings</h2>
         <table class="form-table">
-            <tr valign="top">
-                <th scope="row">AWS Access Key</th>
+            <tr>
+                <th scope="row">Default Image Model</th>
                 <td>
-                    <input type="text" name="wpbedrock_aws_key" value="<?php echo esc_attr(get_option('wpbedrock_aws_key')); ?>" class="regular-text" />
-                </td>
-            </tr>
-            <tr valign="top">
-                <th scope="row">AWS Secret Key</th>
-                <td>
-                    <input type="password" name="wpbedrock_aws_secret" value="<?php echo esc_attr(get_option('wpbedrock_aws_secret')); ?>" class="regular-text" />
-                </td>
-            </tr>
-            <tr valign="top">
-                <th scope="row">AWS Region</th>
-                <td>
-                    <select name="wpbedrock_aws_region">
-                        <option value="us-east-1" <?php selected(get_option('wpbedrock_aws_region'), 'us-east-1'); ?>>US East (N. Virginia)</option>
-                        <option value="us-west-2" <?php selected(get_option('wpbedrock_aws_region'), 'us-west-2'); ?>>US West (Oregon)</option>
-                        <option value="ap-northeast-1" <?php selected(get_option('wpbedrock_aws_region'), 'ap-northeast-1'); ?>>Asia Pacific (Tokyo)</option>
-                        <option value="ap-southeast-1" <?php selected(get_option('wpbedrock_aws_region'), 'ap-southeast-1'); ?>>Asia Pacific (Singapore)</option>
-                        <option value="eu-central-1" <?php selected(get_option('wpbedrock_aws_region'), 'eu-central-1'); ?>>Europe (Frankfurt)</option>
+                    <select name="wpbedrock_image_model_id">
+                        <optgroup label="Stable Diffusion Models">
+                            <?php foreach ($image_models as $model): ?>
+                                <?php if ($model['type'] === 'stable-diffusion'): ?>
+                                    <option value="<?php echo esc_attr($model['id']); ?>" <?php selected(get_option('wpbedrock_image_model_id'), $model['id']); ?>>
+                                        <?php echo esc_html($model['name']); ?>
+                                    </option>
+                                <?php endif; ?>
+                            <?php endforeach; ?>
+                        </optgroup>
+                        <optgroup label="Nova Canvas Models">
+                            <?php foreach ($image_models as $model): ?>
+                                <?php if ($model['type'] === 'nova-canvas'): ?>
+                                    <option value="<?php echo esc_attr($model['id']); ?>" <?php selected(get_option('wpbedrock_image_model_id'), $model['id']); ?>>
+                                        <?php echo esc_html($model['name']); ?>
+                                    </option>
+                                <?php endif; ?>
+                            <?php endforeach; ?>
+                        </optgroup>
                     </select>
-                    <p class="description">Select the AWS Bedrock region closest to your server</p>
+                    <p class="description">Select the default model for image generation.</p>
                 </td>
             </tr>
-            <tr valign="top">
-                <th scope="row">Model ID</th>
+            <tr>
+                <th scope="row">Default Style Preset</th>
                 <td>
-                    <select name="wpbedrock_model_id">
-                        <!-- Claude 3 系列 -->
-                        <option value="anthropic.claude-3-opus-20240229-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'anthropic.claude-3-opus-20240229-v1:0'); ?>>Claude 3 Opus</option>
-                        <option value="anthropic.claude-3-sonnet-20240229-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'anthropic.claude-3-sonnet-20240229-v1:0'); ?>>Claude 3 Sonnet</option>
-                        <option value="anthropic.claude-3-haiku-20240307-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'anthropic.claude-3-haiku-20240307-v1:0'); ?>>Claude 3 Haiku</option>
-                        <option value="us.anthropic.claude-3-5-haiku-20241022-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.anthropic.claude-3-5-haiku-20241022-v1:0'); ?>>Claude 3.5 Haiku</option>
-                        <option value="us.anthropic.claude-3-5-sonnet-20241022-v2:0" <?php selected(get_option('wpbedrock_model_id'), 'us.anthropic.claude-3-5-sonnet-20241022-v2:0'); ?>>Claude 3.5 Sonnet</option>
-
-                        <!-- AWS Nova 系列 -->
-                        <option value="us.amazon.nova-micro-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.amazon.nova-micro-v1:0'); ?>>Nova Micro</option>
-                        <option value="us.amazon.nova-lite-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.amazon.nova-lite-v1:0'); ?>>Nova Lite</option>
-                        <option value="us.amazon.nova-pro-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.amazon.nova-pro-v1:0'); ?>>Nova Pro</option>
-
-                        <!-- Llama 3 系列 -->
-                        <option value="us.meta.llama3-1-8b-instruct-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.meta.llama3-1-8b-instruct-v1:0'); ?>>Llama 3 1.8B Instruct</option>
-                        <option value="us.meta.llama3-1-70b-instruct-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.meta.llama3-1-70b-instruct-v1:0'); ?>>Llama 3 1.70B Instruct</option>
-                        <option value="us.meta.llama3-2-11b-instruct-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.meta.llama3-2-11b-instruct-v1:0'); ?>>Llama 3 2.11B Instruct</option>
-                        <option value="us.meta.llama3-2-90b-instruct-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.meta.llama3-2-90b-instruct-v1:0'); ?>>Llama 3 2.90B Instruct</option>
-                        <option value="us.meta.llama3-3-70b-instruct-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.meta.llama3-3-70b-instruct-v1:0'); ?>>Llama 3 3.70B Instruct</option>
-
-                        <!-- Mistral 系列 -->
-                        <option value="mistral.mistral-large-2402-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'mistral.mistral-large-2402-v1:0'); ?>>Mistral Large 2402</option>
-                        <option value="mistral.mistral-large-2407-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'mistral.mistral-large-2407-v1:0'); ?>>Mistral Large 2407</option>
+                    <select name="wpbedrock_image_style_preset">
+                        <?php foreach ($style_presets as $value => $label): ?>
+                            <option value="<?php echo esc_attr($value); ?>" <?php selected(get_option('wpbedrock_image_style_preset'), $value); ?>>
+                                <?php echo esc_html($label); ?>
+                            </option>
+                        <?php endforeach; ?>
                     </select>
+                    <p class="description">Select the default style preset for Stable Diffusion models.</p>
                 </td>
             </tr>
-            <tr valign="top">
-                <th scope="row">Enable Streaming</th>
+            <tr>
+                <th scope="row">Default Image Size</th>
                 <td>
-                    <label>
-                        <input type="checkbox" name="wpbedrock_enable_stream" value="1" <?php checked(get_option('wpbedrock_enable_stream', '1'), '1'); ?> />
-                        Enable streaming responses (real-time text generation)
-                    </label>
-                    <p class="description">Show responses as they are generated, word by word</p>
+                    <input type="number" name="wpbedrock_image_width" value="<?php echo esc_attr(get_option('wpbedrock_image_width', '1024')); ?>" min="512" max="1024" step="8" style="width: 80px;">
+                    ×
+                    <input type="number" name="wpbedrock_image_height" value="<?php echo esc_attr(get_option('wpbedrock_image_height', '1024')); ?>" min="512" max="1024" step="8" style="width: 80px;">
+                    <p class="description">Set the default image dimensions (width × height).</p>
                 </td>
             </tr>
-            <tr valign="top">
-                <th scope="row">Temperature</th>
+            <tr>
+                <th scope="row">Default Steps</th>
                 <td>
-                    <input type="number" name="wpbedrock_temperature" value="<?php echo esc_attr(get_option('wpbedrock_temperature', '0.7')); ?>" class="small-text" step="0.1" min="0" max="1" />
-                    <p class="description">Controls randomness in the output (0.0 to 1.0)</p>
+                    <input type="number" name="wpbedrock_image_steps" value="<?php echo esc_attr(get_option('wpbedrock_image_steps', '50')); ?>" min="10" max="150" style="width: 80px;">
+                    <p class="description">Number of denoising steps. Higher values produce better quality but take longer.</p>
                 </td>
             </tr>
-            <tr valign="top">
-                <th scope="row">Max Tokens</th>
+            <tr>
+                <th scope="row">Default CFG Scale</th>
                 <td>
-                    <input type="number" name="wpbedrock_max_tokens" value="<?php echo esc_attr(get_option('wpbedrock_max_tokens', '2000')); ?>" class="small-text" min="1" max="4000" />
-                    <p class="description">Maximum length of the generated response</p>
+                    <input type="number" name="wpbedrock_image_cfg_scale" value="<?php echo esc_attr(get_option('wpbedrock_image_cfg_scale', '7')); ?>" min="0" max="35" step="0.1" style="width: 80px;">
+                    <p class="description">How closely to follow the prompt. Higher values produce images that more closely match the prompt but may be less creative.</p>
                 </td>
             </tr>
-            <tr valign="top">
-                <th scope="row">Chat Initial Message</th>
+            <tr>
+                <th scope="row">Default Quality</th>
                 <td>
-                    <textarea name="wpbedrock_chat_initial_message" rows="3" class="large-text"><?php echo esc_textarea(get_option('wpbedrock_chat_initial_message', 'Hello! How can I help you today?')); ?></textarea>
-                    <p class="description">Initial message shown in the chat window</p>
+                    <select name="wpbedrock_image_quality">
+                        <option value="standard" <?php selected(get_option('wpbedrock_image_quality'), 'standard'); ?>>Standard</option>
+                        <option value="premium" <?php selected(get_option('wpbedrock_image_quality'), 'premium'); ?>>Premium</option>
+                    </select>
+                    <p class="description">Quality setting for Nova Canvas models. Premium quality takes longer but produces better results.</p>
                 </td>
             </tr>
-            <tr valign="top">
-                <th scope="row">Chat Input Placeholder</th>
+            <tr>
+                <th scope="row">Default Negative Prompt</th>
                 <td>
-                    <input type="text" name="wpbedrock_chat_placeholder" value="<?php echo esc_attr(get_option('wpbedrock_chat_placeholder', 'Type your message here...')); ?>" class="regular-text" />
-                    <p class="description">Placeholder text for the chat input field</p>
+                    <textarea name="wpbedrock_image_negative_prompt" rows="3" class="large-text"><?php echo esc_textarea(get_option('wpbedrock_image_negative_prompt', '')); ?></textarea>
+                    <p class="description">Default negative prompt to avoid unwanted elements in generated images. For example: "blurry, low quality, distorted, watermark"</p>
                 </td>
             </tr>
         </table>
+
+        <h2>Chat Settings</h2>
+                <table class="form-table">
+                    <tr valign="top">
+                        <th scope="row">Default System Prompt</th>
+                        <td>
+                            <textarea name="wpbedrock_system_prompt" rows="4" class="large-text" style="font-family: monospace;"><?php echo esc_textarea(get_option('wpbedrock_system_prompt', 'You are a helpful AI assistant. Respond to user queries in a clear and concise manner.')); ?></textarea>
+                            <p class="description">Define the AI's default behavior and role</p>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row">Initial Message</th>
+                        <td>
+                            <textarea name="wpbedrock_chat_initial_message" rows="2" class="large-text"><?php echo esc_textarea(get_option('wpbedrock_chat_initial_message', 'Hello! How can I help you today?')); ?></textarea>
+                            <p class="description">First message shown in new chat sessions</p>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row">Input Placeholder</th>
+                        <td>
+                            <input type="text" name="wpbedrock_chat_placeholder" value="<?php echo esc_attr(get_option('wpbedrock_chat_placeholder', 'Type your message here...')); ?>" class="regular-text" />
+                            <p class="description">Placeholder text for the chat input field</p>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row">Context Length</th>
+                        <td>
+                            <input type="number" name="wpbedrock_context_length" value="<?php echo esc_attr(get_option('wpbedrock_context_length', '4')); ?>" class="small-text" min="1" max="10" />
+                            <p class="description">Number of previous messages to include as context (1-10)</p>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row">Enable Streaming</th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="wpbedrock_enable_stream" value="1" <?php checked(get_option('wpbedrock_enable_stream', '1'), '1'); ?> />
+                                Show responses as they are generated
+                            </label>
+                            <p class="description">Provides a more interactive experience</p>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+
         <?php submit_button(); ?>
     </form>
 </div>
+
+<style>
+.wp-bedrock-settings-container {
+    max-width: 1200px;
+}
+
+.settings-section {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.settings-section h2 {
+    margin-top: 0;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #eee;
+}
+
+.temperature-control {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: 300px;
+}
+
+.temperature-slider {
+    flex-grow: 1;
+}
+
+.temperature-value {
+    min-width: 40px;
+    text-align: center;
+}
+
+/* Responsive table layout */
+@media screen and (max-width: 782px) {
+    .form-table td {
+        padding: 15px 10px;
+    }
+    
+    .form-table th {
+        padding: 15px 10px 5px;
+    }
+}
+</style>
+
+<script>
+jQuery(document).ready(function($) {
+    // Temperature slider
+    $('.temperature-slider').on('input', function() {
+        $(this).next('.temperature-value').text(this.value);
+    });
+});
+</script>
