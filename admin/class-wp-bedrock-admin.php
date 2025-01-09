@@ -44,8 +44,8 @@ class WP_Bedrock_Admin {
 
         add_action('admin_menu', array($this, 'add_plugin_admin_menu'));
         add_action('admin_init', array($this, 'register_settings'));
-        add_action('wp_ajax_wpbedrock_chat_message', array($this, 'handle_chat_message'));
-        add_action('wp_ajax_nopriv_wpbedrock_chat_message', array($this, 'handle_chat_message'));
+        add_action('wp_ajax_wpbedrock_chat', array($this, 'handle_chat_message'));
+        add_action('wp_ajax_nopriv_wpbedrock_chat', array($this, 'handle_chat_message'));
         add_action('wp_ajax_wpbedrock_generate_image', array($this, 'handle_image_generation'));
         add_action('wp_ajax_nopriv_wpbedrock_generate_image', array($this, 'handle_image_generation'));
         add_action('wp_ajax_wpbedrock_upscale_image', array($this, 'handle_image_upscale'));
@@ -171,47 +171,95 @@ class WP_Bedrock_Admin {
         }
 
         if (strpos($screen->id, 'wp-bedrock_chatbot') !== false) {
-            // Enqueue markdown-it and highlight.js
+            // Enqueue jQuery UI dialog first
+            wp_enqueue_style('wp-jquery-ui-dialog');
+            wp_enqueue_script('jquery-ui-dialog');
+
+            // Register and enqueue styles first
             wp_enqueue_style(
                 'highlight-js',
-                'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css',
+                plugin_dir_url(__FILE__) . 'css/github.min.css',
                 array(),
-                '11.9.0'
+                $this->version,
+                'all'
             );
 
-            // Core highlight.js
-            wp_enqueue_script(
+            // Register scripts with proper dependencies
+            wp_register_script(
                 'highlight-js',
-                'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js',
-                array(),
-                '11.9.0',
-                true
+                plugin_dir_url(__FILE__) . 'js/highlight.min.js',
+                array('jquery'),
+                $this->version,
+                true // Load in footer
             );
 
-            // Common programming languages
-            wp_enqueue_script(
-                'highlight-js-languages',
-                'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/common.min.js',
-                array('highlight-js'),
-                '11.9.0',
-                true
-            );
-
-            wp_enqueue_script(
+            wp_register_script(
                 'markdown-it',
-                'https://cdnjs.cloudflare.com/ajax/libs/markdown-it/14.0.0/markdown-it.min.js',
-                array(),
-                '14.0.0',
-                true
+                plugin_dir_url(__FILE__) . 'js/markdown-it.min.js',
+                array('jquery'),
+                $this->version,
+                true // Load in footer
             );
 
+            // Enqueue scripts in order and add initialization code
+            wp_enqueue_script('highlight-js');
+            wp_add_inline_script('highlight-js', 'window.hljs = hljs;', 'after');
+
+            wp_enqueue_script('markdown-it');
+            wp_add_inline_script('markdown-it', 'window.markdownit = markdownit;', 'after');
+
+            // Add debug logging
+            wp_add_inline_script('highlight-js', 'console.log("[WP Bedrock] highlight.js loaded");', 'after');
+            wp_add_inline_script('markdown-it', 'console.log("[WP Bedrock] markdown-it loaded");', 'after');
+
+            // Load chatbot script with all dependencies
             wp_enqueue_script(
                 $this->plugin_name . '-chatbot',
                 plugin_dir_url(__FILE__) . 'js/wp-bedrock-chatbot.js',
-                array('jquery', 'highlight-js', 'markdown-it'),
+                array('jquery', 'jquery-ui-dialog', 'highlight-js', 'markdown-it'),
                 $this->version,
-                true
+                true // Load in footer to ensure all dependencies are loaded first
             );
+
+            // Add initialization check and error handling
+            wp_add_inline_script($this->plugin_name . '-chatbot', '
+                function checkDependencies() {
+                    var missing = [];
+                    if (typeof jQuery === "undefined") missing.push("jQuery");
+                    if (typeof markdownit === "undefined") missing.push("markdown-it");
+                    if (typeof hljs === "undefined") missing.push("highlight.js");
+                    return missing;
+                }
+
+                function initializeChat() {
+                    var missing = checkDependencies();
+                    if (missing.length > 0) {
+                        console.error("[WP Bedrock] Missing required libraries:", missing.join(", "));
+                        var container = document.querySelector(".chat-container");
+                        if (container) {
+                            container.innerHTML = "<div class=\"error-message\" style=\"padding: 20px; color: #721c24; background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; margin: 10px;\">" +
+                                "<h3 style=\"margin-top: 0;\">Error: Chat Initialization Failed</h3>" +
+                                "<p>Missing required libraries: " + missing.join(", ") + "</p>" +
+                                "<p>Please try refreshing the page. If the error persists, contact your administrator.</p>" +
+                                "</div>";
+                        }
+                        return false;
+                    }
+                    return true;
+                }
+
+                // Try to initialize immediately
+                if (document.readyState === "complete" || document.readyState === "interactive") {
+                    initializeChat();
+                } else {
+                    document.addEventListener("DOMContentLoaded", initializeChat);
+                }
+
+                // Add a fallback check
+                setTimeout(function() {
+                    initializeChat();
+                }, 2000);
+            ', 'before');
 
             // Available models grouped by provider
             $models = array(
@@ -327,7 +375,8 @@ class WP_Bedrock_Admin {
                     'models' => $models,
                     'default_model' => get_option('wpbedrock_model_id', 'anthropic.claude-3-haiku-20240307-v1:0'),
                     'default_temperature' => floatval(get_option('wpbedrock_temperature', '0.7')),
-                    'default_system_prompt' => get_option('wpbedrock_system_prompt', 'You are a helpful AI assistant. Respond to user queries in a clear and concise manner.')
+                    'default_system_prompt' => get_option('wpbedrock_system_prompt', 'You are a helpful AI assistant. Respond to user queries in a clear and concise manner.'),
+                    'plugin_url' => plugin_dir_url(__FILE__)
                 )
             );
         }
@@ -338,8 +387,8 @@ class WP_Bedrock_Admin {
      */
     public function add_plugin_admin_menu() {
         add_menu_page(
-            'WP Bedrock',
-            'WP Bedrock',
+            'Bedrock AI Agent',
+            'Bedrock AI Agent',
             'manage_options',
             $this->plugin_name,
             array($this, 'display_plugin_setup_page'),
@@ -401,115 +450,29 @@ class WP_Bedrock_Admin {
             }
         ));
 
-        // Image Generation Settings
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_image_model_id');
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_image_width');
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_image_height');
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_image_steps');
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_image_cfg_scale');
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_image_style_preset');
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_image_negative_prompt');
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_image_quality');
     }
 
     /**
      * Display pages
      */
     public function display_settings_page() {
-        // Image generation models
-        $image_models = array(
-            // Bedrock Stable Diffusion Models
-            array(
-                'id' => 'stability.stable-diffusion-xl-v3-large',
-                'name' => 'SD3 Large',
-                'description' => 'Most capable SD3 model',
-                'max_size' => 1024,
-                'type' => 'bedrock-sd'
-            ),
-            array(
-                'id' => 'stability.stable-diffusion-xl-v3-medium',
-                'name' => 'SD3 Medium',
-                'description' => 'Balanced SD3 model',
-                'max_size' => 1024,
-                'type' => 'bedrock-sd'
-            ),
-            array(
-                'id' => 'stability.stable-diffusion-xl-v3-large-turbo',
-                'name' => 'SD3 Large Turbo',
-                'description' => 'Fastest SD3 model',
-                'max_size' => 1024,
-                'type' => 'bedrock-sd'
-            ),
-            array(
-                'id' => 'stability.stable-image-core-v1',
-                'name' => 'Stable Image Core',
-                'description' => 'Core image generation model',
-                'max_size' => 1024,
-                'type' => 'bedrock-sd'
-            ),
-            array(
-                'id' => 'stability.stable-image-ultra-v1',
-                'name' => 'Stable Image Ultra',
-                'description' => 'Ultra high quality model',
-                'max_size' => 1024,
-                'type' => 'bedrock-sd'
-            ),
-            // Bedrock Titan Models
-            array(
-                'id' => 'amazon.titan-image-generator-v1',
-                'name' => 'Titan Image Generator v1',
-                'description' => 'First generation Titan model',
-                'max_size' => 1792,
-                'type' => 'bedrock-titan'
-            ),
-            array(
-                'id' => 'amazon.titan-image-generator-v2',
-                'name' => 'Titan Image Generator v2',
-                'description' => 'Enhanced Titan model',
-                'max_size' => 1792,
-                'type' => 'bedrock-titan'
-            ),
-            // Bedrock Nova Canvas Models
-            array(
-                'id' => 'amazon.nova-canvas-v1',
-                'name' => 'Nova Canvas v1',
-                'description' => 'Nova Canvas image generation',
-                'max_size' => 1792,
-                'type' => 'bedrock-nova'
-            ),
-            array(
-                'id' => 'amazon.nova-reel-v1',
-                'name' => 'Nova Reel',
-                'description' => 'Nova Reel image generation',
-                'max_size' => 1792,
-                'type' => 'bedrock-nova'
-            )
-        );
-
-        // Style presets
-        $style_presets = array(
-            'photographic' => 'Photographic',
-            'digital-art' => 'Digital Art',
-            'anime' => 'Anime',
-            'cinematic' => 'Cinematic',
-            'comic-book' => 'Comic Book',
-            'fantasy-art' => 'Fantasy Art',
-            'line-art' => 'Line Art',
-            'analog-film' => 'Analog Film',
-            'neon-punk' => 'Neon Punk',
-            'isometric' => 'Isometric',
-            'low-poly' => 'Low Poly',
-            'origami' => 'Origami',
-            'modeling-compound' => 'Modeling Compound',
-            '3d-model' => '3D Model',
-            'pixel-art' => 'Pixel Art',
-            'tile-texture' => 'Tile Texture'
-        );
-
         include plugin_dir_path(dirname(__FILE__)) . 'admin/partials/wp-bedrock-admin-settings.php';
     }
 
     public function display_chatbot_page() {
+        $aws_key = get_option('wpbedrock_aws_key');
+        $aws_secret = get_option('wpbedrock_aws_secret');
+        
+        if (empty($aws_key) || empty($aws_secret)) {
+            add_settings_error(
+                'wpbedrock_messages',
+                'wpbedrock_aws_credentials_missing',
+                'AWS credentials are not configured. Please configure them in the <a href="' . admin_url('admin.php?page=wp-bedrock_settings') . '">settings page</a>.',
+                'error'
+            );
+            settings_errors('wpbedrock_messages');
+        }
+        
         include plugin_dir_path(dirname(__FILE__)) . 'admin/partials/wp-bedrock-admin-chatbot.php';
     }
 
@@ -697,11 +660,12 @@ class WP_Bedrock_Admin {
         check_ajax_referer('wpbedrock_chat_nonce', 'nonce');
 
         // Get parameters from request
+        // Get request parameters with defaults from settings
         $message = isset($_REQUEST['message']) ? sanitize_textarea_field($_REQUEST['message']) : '';
         $image = isset($_REQUEST['image']) ? $_REQUEST['image'] : '';
-        $model = isset($_REQUEST['model']) ? sanitize_text_field($_REQUEST['model']) : '';
-        $temperature = isset($_REQUEST['temperature']) ? floatval($_REQUEST['temperature']) : 0.7;
-        $system_prompt = isset($_REQUEST['system_prompt']) ? sanitize_textarea_field($_REQUEST['system_prompt']) : '';
+        $model = isset($_REQUEST['model']) ? sanitize_text_field($_REQUEST['model']) : get_option('wpbedrock_model_id', 'anthropic.claude-3-haiku-20240307-v1:0');
+        $temperature = isset($_REQUEST['temperature']) ? floatval($_REQUEST['temperature']) : floatval(get_option('wpbedrock_temperature', '0.7'));
+        $system_prompt = isset($_REQUEST['system_prompt']) ? sanitize_textarea_field($_REQUEST['system_prompt']) : get_option('wpbedrock_system_prompt', 'You are a helpful AI assistant. Respond to user queries in a clear and concise manner.');
         
         if (empty($message) && empty($image)) {
             wp_send_json_error('Message or image is required');
@@ -718,10 +682,10 @@ class WP_Bedrock_Admin {
             $aws_key = get_option('wpbedrock_aws_key');
             $aws_secret = get_option('wpbedrock_aws_secret');
             
-            $model_id = $model ?: get_option('wpbedrock_model_id', 'anthropic.claude-3-haiku-20240307-v1:0');
-            $temperature_value = $temperature ?: floatval(get_option('wpbedrock_temperature', '0.7'));
+            $model_id = $model;
+            $temperature_value = $temperature;
             $max_tokens = intval(get_option('wpbedrock_max_tokens', '2000'));
-            $system_prompt_value = $system_prompt ?: get_option('wpbedrock_system_prompt', 'You are a helpful AI assistant. Respond to user queries in a clear and concise manner.');
+            $system_prompt_value = $system_prompt;
 
             if (empty($aws_key) || empty($aws_secret)) {
                 wp_send_json_error('AWS credentials not configured');
@@ -729,37 +693,128 @@ class WP_Bedrock_Admin {
 
             $history = isset($_REQUEST['history']) ? json_decode(stripslashes($_REQUEST['history']), true) : [];
             
-            $messages = [
-                [
+            // Format messages array for Bedrock
+            $messages = [];
+
+            // Add system message
+            if (!empty($system_prompt_value)) {
+                $messages[] = [
                     'role' => 'system',
                     'content' => $system_prompt_value
-                ]
-            ];
+                ];
+            }
 
+            // Add history messages with proper formatting
             if (is_array($history)) {
-                $messages = array_merge($messages, $history);
+                foreach ($history as $msg) {
+                    if (is_array($msg['content'])) {
+                        // Handle messages with mixed content (text and images)
+                        $content = [];
+                        foreach ($msg['content'] as $item) {
+                            if (isset($item['text'])) {
+                                $content[] = ['text' => $item['text']];
+                            } else if (isset($item['image_url'])) {
+                                $content[] = ['image_url' => $item['image_url']];
+                            }
+                        }
+                        $messages[] = [
+                            'role' => $msg['role'],
+                            'content' => $content
+                        ];
+                    } else {
+                        // Handle simple text messages
+                        $messages[] = [
+                            'role' => $msg['role'],
+                            'content' => $msg['content']
+                        ];
+                    }
+                }
             }
 
-            $user_message = [
+            // Add current user message
+            $current_content = [];
+            if (!empty($message)) {
+                $current_content[] = ['text' => $message];
+            }
+            if (!empty($image)) {
+                $current_content[] = ['image_url' => ['url' => $image]];
+            }
+
+            $messages[] = [
                 'role' => 'user',
-                'content' => []
+                'content' => count($current_content) === 1 ? $current_content[0]['text'] : $current_content
             ];
 
-            if (!empty($message)) {
-                $user_message['content'][] = [
-                    'text' => $message
-                ];
+            // Get selected tools and format based on model type
+            $tools = isset($_REQUEST['tools']) ? json_decode(stripslashes($_REQUEST['tools']), true) : [];
+            $requestBody = [
+                'messages' => $messages,
+                'max_tokens' => $max_tokens,
+                'temperature' => $temperature_value,
+                'top_p' => 0.9,
+                'top_k' => 5
+            ];
+
+            // Format tools based on model type
+            if (strpos($model_id, 'anthropic.claude') !== false) {
+                // Claude format
+                $requestBody['anthropic_version'] = 'bedrock-2024-02-20';
+                if (!empty($tools)) {
+                    $requestBody['tools'] = array_map(function($tool) {
+                        return [
+                            'name' => $tool['function']['name'] ?? '',
+                            'description' => $tool['function']['description'] ?? '',
+                            'input_schema' => $tool['function']['parameters'] ?? []
+                        ];
+                    }, $tools);
+                }
+            } elseif (strpos($model_id, 'mistral.mistral') !== false) {
+                // Mistral format
+                if (!empty($tools)) {
+                    $requestBody['tool_choice'] = 'auto';
+                    $requestBody['tools'] = array_map(function($tool) {
+                        return [
+                            'type' => 'function',
+                            'function' => [
+                                'name' => $tool['function']['name'] ?? '',
+                                'description' => $tool['function']['description'] ?? '',
+                                'parameters' => $tool['function']['parameters'] ?? []
+                            ]
+                        ];
+                    }, $tools);
+                }
+            } elseif (strpos($model_id, 'amazon.nova') !== false) {
+                // Nova format
+                if (!empty($tools)) {
+                    $requestBody['toolConfig'] = [
+                        'tools' => array_map(function($tool) {
+                            return [
+                                'toolSpec' => [
+                                    'name' => $tool['function']['name'] ?? '',
+                                    'description' => $tool['function']['description'] ?? '',
+                                    'inputSchema' => [
+                                        'json' => [
+                                            'type' => 'object',
+                                            'properties' => $tool['function']['parameters']['properties'] ?? [],
+                                            'required' => $tool['function']['parameters']['required'] ?? []
+                                        ]
+                                    ]
+                                ]
+                            ];
+                        }, $tools),
+                        'toolChoice' => ['auto' => []]
+                    ];
+                }
             }
 
-            if (!empty($image)) {
-                $user_message['content'][] = [
-                    'image_url' => [
-                        'url' => $image
-                    ]
-                ];
-            }
-
-            $messages[] = $user_message;
+            // Debug logging
+            error_log('Chat request parameters:');
+            error_log('Message: ' . $message);
+            error_log('Model: ' . $model_id);
+            error_log('Temperature: ' . $temperature_value);
+            error_log('System Prompt: ' . $system_prompt_value);
+            error_log('History length: ' . count($messages));
+            error_log('Messages: ' . json_encode($messages));
 
             require_once WPBEDROCK_PLUGIN_DIR . 'includes/class-wp-bedrock-aws.php';
             $aws_region = get_option('wpbedrock_aws_region', 'us-west-2');
@@ -782,14 +837,15 @@ class WP_Bedrock_Admin {
                 header('Access-Control-Allow-Origin: *');
                 flush();
                 
-                $bedrock->invoke_model(
-                    $messages,
+            $bedrock->invoke_model(
+                $messages,
+                array_merge(
                     [
                         'model_id' => $model_id,
-                        'temperature' => $temperature_value,
-                        'max_tokens' => $max_tokens
                     ],
-                    [],
+                    $requestBody
+                ),
+                [],
                     true,
                     function($text) {
                         $this->send_sse_message(['text' => $text]);

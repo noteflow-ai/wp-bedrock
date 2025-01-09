@@ -1,149 +1,95 @@
 <?php
-/**
- * The core plugin class.
- *
- * @since      1.0.0
- * @package    WP_Bedrock
- * @subpackage WP_Bedrock/includes
- */
-
 namespace WPBEDROCK;
 
 class WP_Bedrock {
+    private $tools;
+    private $plugin_name;
+    private $version;
+    private $admin;
 
-    /**
-     * The loader that's responsible for maintaining and registering all hooks that power
-     * the plugin.
-     *
-     * @since    1.0.0
-     * @access   protected
-     * @var      WP_Bedrock_Loader    $loader    Maintains and registers all hooks for the plugin.
-     */
-    protected $loader;
-
-    /**
-     * The unique identifier of this plugin.
-     *
-     * @since    1.0.0
-     * @access   protected
-     * @var      string    $plugin_name    The string used to uniquely identify this plugin.
-     */
-    protected $plugin_name;
-
-    /**
-     * The current version of the plugin.
-     *
-     * @since    1.0.0
-     * @access   protected
-     * @var      string    $version    The current version of the plugin.
-     */
-    protected $version;
-
-    /**
-     * Define the core functionality of the plugin.
-     *
-     * @since    1.0.0
-     */
     public function __construct() {
-        if (defined('WPBEDROCK_VERSION')) {
-            $this->version = WPBEDROCK_VERSION;
-        } else {
-            $this->version = '1.0.0';
-        }
         $this->plugin_name = 'wp-bedrock';
-
+        $this->version = WPBEDROCK_VERSION;
         $this->load_dependencies();
-        $this->set_locale();
-        $this->define_admin_hooks();
-        $this->define_public_hooks();
+        $this->setup_hooks();
     }
 
-    /**
-     * Load the required dependencies for this plugin.
-     *
-     * @since    1.0.0
-     * @access   private
-     */
     private function load_dependencies() {
-        // The class responsible for orchestrating the actions and filters of the core plugin.
-        require_once plugin_dir_path(dirname(__FILE__)) . 'includes/class-wp-bedrock-loader.php';
-
-        // The class responsible for defining internationalization functionality of the plugin.
-        require_once plugin_dir_path(dirname(__FILE__)) . 'includes/class-wp-bedrock-i18n.php';
-
-        // The class responsible for defining all actions that occur in the admin area.
+        require_once plugin_dir_path(dirname(__FILE__)) . 'includes/class-wp-bedrock-tools.php';
         require_once plugin_dir_path(dirname(__FILE__)) . 'admin/class-wp-bedrock-admin.php';
+        
+        $this->tools = new WP_Bedrock_Tools();
+        $this->admin = new WP_Bedrock_Admin($this->plugin_name, $this->version);
+    }
 
-        // The class responsible for defining all actions that occur in the public-facing side of the site.
-        require_once plugin_dir_path(dirname(__FILE__)) . 'public/class-wp-bedrock-public.php';
+    private function setup_hooks() {
+        add_action('wp_ajax_wpbedrock_chat', array($this, 'handle_chat_request'));
+        add_action('wp_ajax_nopriv_wpbedrock_chat', array($this, 'handle_chat_request'));
+        add_action('wp_ajax_wpbedrock_tool', array($this, 'handle_tool_request'));
+        add_action('wp_ajax_nopriv_wpbedrock_tool', array($this, 'handle_tool_request'));
+    }
 
-        $this->loader = new WP_Bedrock_Loader();
+    public function handle_chat_request() {
+        check_ajax_referer('wpbedrock_chat_nonce', 'nonce');
+
+        $message = sanitize_text_field($_POST['message'] ?? '');
+        $image = sanitize_text_field($_POST['image'] ?? '');
+        $history = json_decode(stripslashes($_POST['history'] ?? '[]'), true);
+
+        if (empty($message)) {
+            wp_send_json_error('Message is required');
+        }
+
+        try {
+            // Your existing chat handling code here
+            // ...
+
+            // Add tools to the chat context
+            $tools = $this->tools->get_tools();
+            // Add tools to your chat API call
+            // ...
+
+        } catch (\Exception $e) {
+            wp_send_json_error($e->getMessage());
+        }
+    }
+
+    public function handle_tool_request() {
+        check_ajax_referer('wpbedrock_chat_nonce', 'nonce');
+
+        $tool_name = sanitize_text_field($_POST['tool'] ?? '');
+        $parameters = json_decode(stripslashes($_POST['parameters'] ?? '{}'), true);
+
+        if (empty($tool_name)) {
+            wp_send_json_error('Tool name is required');
+        }
+
+        try {
+            $result = $this->tools->execute_tool($tool_name, $parameters);
+            wp_send_json_success($result);
+        } catch (\Exception $e) {
+            wp_send_json_error($e->getMessage());
+        }
+    }
+
+    public function get_tools() {
+        return $this->tools->get_tools();
     }
 
     /**
-     * Define the locale for this plugin for internationalization.
-     *
-     * @since    1.0.0
-     * @access   private
-     */
-    private function set_locale() {
-        $plugin_i18n = new WP_Bedrock_i18n();
-        $this->loader->add_action('plugins_loaded', $plugin_i18n, 'load_plugin_textdomain');
-    }
-
-    /**
-     * Register all of the hooks related to the admin area functionality of the plugin.
-     *
-     * @since    1.0.0
-     * @access   private
-     */
-    private function define_admin_hooks() {
-        $plugin_admin = new WP_Bedrock_Admin($this->get_plugin_name(), $this->get_version());
-
-        $this->loader->add_action('admin_enqueue_scripts', $plugin_admin, 'enqueue_styles');
-        $this->loader->add_action('admin_enqueue_scripts', $plugin_admin, 'enqueue_scripts');
-    }
-
-    /**
-     * Register all of the hooks related to the public-facing functionality of the plugin.
-     *
-     * @since    1.0.0
-     * @access   private
-     */
-    private function define_public_hooks() {
-        $plugin_public = new WP_Bedrock_Public($this->get_plugin_name(), $this->get_version());
-
-        $this->loader->add_action('wp_enqueue_scripts', $plugin_public, 'enqueue_styles');
-        $this->loader->add_action('wp_enqueue_scripts', $plugin_public, 'enqueue_scripts');
-    }
-
-    /**
-     * Run the loader to execute all of the hooks with WordPress.
-     *
-     * @since    1.0.0
+     * Execute the plugin
      */
     public function run() {
-        $this->loader->run();
+        // Set up admin hooks
+        add_action('admin_enqueue_scripts', array($this->admin, 'enqueue_styles'));
+        add_action('admin_enqueue_scripts', array($this->admin, 'enqueue_scripts'));
     }
 
-    /**
-     * The name of the plugin used to uniquely identify it within the context of
-     * WordPress and to define internationalization functionality.
-     *
-     * @since     1.0.0
-     * @return    string    The name of the plugin.
-     */
-    public function get_plugin_name() {
-        return $this->plugin_name;
+    public static function activate() {
+        // Activation code
     }
 
-    /**
-     * Retrieve the version number of the plugin.
-     *
-     * @since     1.0.0
-     * @return    string    The version number of the plugin.
-     */
-    public function get_version() {
-        return $this->version;
+    public static function deactivate() {
+        // Deactivation code
     }
 }

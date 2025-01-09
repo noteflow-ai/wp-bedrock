@@ -22,7 +22,7 @@ class WP_Bedrock_Activator {
             aws_access_key varchar(255) DEFAULT '',
             aws_secret_key varchar(255) DEFAULT '',
             aws_region varchar(50) DEFAULT 'us-east-1',
-            model_id varchar(100) DEFAULT 'anthropic.claude-v2',
+            model_id varchar(100) DEFAULT 'us.anthropic.claude-3-haiku-20240307-v1',
             temperature float DEFAULT 0.7,
             max_tokens int DEFAULT 1000,
             top_p float DEFAULT 1,
@@ -57,26 +57,39 @@ class WP_Bedrock_Activator {
         ) $charset_collate;";
 
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        
+        // Start output buffering to catch any potential output
+        ob_start();
         \dbDelta($sql);
+        ob_clean();
 
         // Insert default settings if not exists
         $table_name = $wpdb->prefix . 'wpbedrock';
         $settings = $wpdb->get_row("SELECT * FROM $table_name WHERE name = 'wpbedrock_settings'");
         
         if (!$settings) {
-            $wpdb->insert(
-                $table_name,
-                array(
-                    'name' => 'wpbedrock_settings',
-                    'aws_region' => 'us-east-1',
-                    'model_id' => 'anthropic.claude-v2',
-                    'temperature' => 0.7,
-                    'max_tokens' => 1000,
-                    'top_p' => 1,
-                    'frequency_penalty' => 0,
-                    'presence_penalty' => 0
-                )
-            );
+            ob_start();
+            try {
+                $wpdb->insert(
+                    $table_name,
+                    array(
+                        'name' => 'wpbedrock_settings',
+                        'aws_region' => 'us-east-1',
+                        'model_id' => 'us.anthropic.claude-3-haiku-20240307-v1',
+                        'temperature' => 0.7,
+                        'max_tokens' => 1000,
+                        'top_p' => 1,
+                        'frequency_penalty' => 0,
+                        'presence_penalty' => 0
+                    )
+                );
+                if ($wpdb->last_error) {
+                    throw new \Exception($wpdb->last_error);
+                }
+            } catch (\Exception $e) {
+                error_log('WP Bedrock activation error: ' . $e->getMessage());
+            }
+            ob_clean();
         }
     }
 }

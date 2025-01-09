@@ -1,46 +1,65 @@
-jQuery(document).ready(function($) {
-    if (!wpbedrock_chat) {
-        console.error('WP Bedrock Chat configuration not found');
-        return;
+// Wait for DOM and required libraries to be loaded
+function initChatbot() {
+    // Check for all required dependencies
+    const requiredDeps = {
+        'jQuery': () => typeof jQuery !== 'undefined',
+        'wpbedrock_chat': () => typeof wpbedrock_chat !== 'undefined',
+        'markdownit': () => typeof window.markdownit !== 'undefined',
+        'hljs': () => typeof window.hljs !== 'undefined',
+        'jQuery UI Dialog': () => typeof jQuery !== 'undefined' && typeof jQuery.fn.dialog !== 'undefined'
+    };
+
+    // Add timeout tracking
+    window.wpBedrockInitAttempts = (window.wpBedrockInitAttempts || 0) + 1;
+    const MAX_ATTEMPTS = 100; // 10 seconds total
+
+    // Check if any dependencies are missing
+    const missing = Object.entries(requiredDeps)
+        .filter(([_, check]) => !check())
+        .map(([name]) => name);
+
+    if (missing.length > 0) {
+        if (window.wpBedrockInitAttempts < MAX_ATTEMPTS) {
+            console.log(`[WP Bedrock] Waiting for libraries (attempt ${window.wpBedrockInitAttempts}/${MAX_ATTEMPTS}):`, missing.join(', '));
+            setTimeout(initChatbot, 100);
+            return;
+        } else {
+            console.error('[WP Bedrock] Failed to load required libraries after 10 seconds:', missing.join(', '));
+            const container = document.querySelector('.chat-container');
+            if (container) {
+                container.innerHTML = `
+                    <div class="error-message" style="padding: 20px; color: #721c24; background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; margin: 10px;">
+                        <h3 style="margin-top: 0;">Error: Chat Initialization Failed</h3>
+                        <p>Failed to load required libraries: ${missing.join(', ')}</p>
+                        <p>Please check your browser console for errors and try refreshing the page.</p>
+                    </div>`;
+            }
+            return;
+        }
     }
 
-    // Initialize markdown-it and highlight.js
-    const md = window.markdownit({
-        highlight: function (str, lang) {
-            if (lang && hljs.getLanguage(lang)) {
-                try {
-                    return hljs.highlight(str, { language: lang }).value;
-                } catch (__) {}
-            }
-            return ''; // use external default escaping
-        }
-    });
+    // Reset attempts counter on successful load
+    window.wpBedrockInitAttempts = 0;
+
+    console.log('[WP Bedrock] All dependencies loaded, initializing chatbot...');
+    const $ = jQuery;
 
     // Chat state
     let isProcessing = false;
     let currentStreamingMessage = null;
-    let typingQueue = [];
-    let isTyping = false;
-    let typingTimeout = null;
-    let currentImage = null;
     let messageHistory = [];
     let currentEventSource = null;
-
-    // Model type mappers
-    const ClaudeMapper = {
-        assistant: "assistant",
-        user: "user",
-        system: "user",
-    };
-
-    const MistralMapper = {
-        system: "system",
-        user: "user",
-        assistant: "assistant",
-    };
+    let isFullscreen = false;
+    let chunks = [];
+    let pendingChunk = null;
+    let remainText = '';
+    let runTools = [];
+    let toolIndex = -1;
+    let selectedTools = []; // Moved to outer scope
 
     // DOM Elements
     const elements = {
+        chatContainer: $('.chat-container'),
         messagesContainer: $('#wpaicg-chat-messages'),
         messageInput: $('#wpaicg-chat-message'),
         sendButton: $('#wpaicg-send-message'),
@@ -51,36 +70,107 @@ jQuery(document).ready(function($) {
         previewImage: $('#wpaicg-preview-image'),
         removeImageButton: $('#wpaicg-remove-image'),
         clearChatButton: $('#clear-chat'),
+        refreshChatButton: $('#refresh-chat'),
         exportChatButton: $('#export-chat'),
+        shareChatButton: $('#share-chat'),
+        fullscreenButton: $('#fullscreen-chat'),
+        settingsTrigger: $('#wpaicg-settings-trigger'),
         promptTrigger: $('#wpaicg-prompt-trigger'),
-        maskTrigger: $('#wpaicg-mask-trigger')
+        maskTrigger: $('#wpaicg-mask-trigger'),
+        voiceTrigger: $('#wpaicg-voice-trigger'),
+        gridTrigger: $('#wpaicg-grid-trigger'),
+        layoutTrigger: $('#wpaicg-layout-trigger'),
+        messageCountDisplay: $('.message-count')
     };
 
-    // Initialize UI
-    function initializeUI() {
-        // Initialize tooltips
-        if ($.fn.tooltip) {
-            $('.wp-bedrock-chat [title]').tooltip({
-                position: { my: 'left+10 center', at: 'right center' }
+    // Tool handling
+    async function executeTool(toolCall) {
+        try {
+            const response = await fetch(wpbedrock_chat.ajaxurl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: new URLSearchParams({
+                    action: 'wpbedrock_tool',
+                    nonce: wpbedrock_chat.nonce,
+                    tool: toolCall.function.name,
+                    parameters: toolCall.function.arguments
+                })
             });
-        }
 
-        // Add copy-to-clipboard for code blocks
-        $(document).on('click', '.copy-code', function() {
-            const codeBlock = $(this).siblings('pre').find('code');
-            navigator.clipboard.writeText(codeBlock.text()).then(() => {
-                const originalText = $(this).text();
-                $(this).text('Copied!');
-                setTimeout(() => $(this).text(originalText), 2000);
-            });
-        });
+            if (!response.ok) throw new Error('Network response was not ok');
+            const result = await response.json();
+
+            if (!result.success) {
+                throw new Error(result.data);
+            }
+
+            return {
+                tool_call_id: toolCall.id,
+                role: 'tool',
+                name: toolCall.function.name,
+                content: JSON.stringify(result.data)
+            };
+        } catch (error) {
+            console.error('[WP Bedrock] Tool execution failed:', error);
+            return {
+                tool_call_id: toolCall.id,
+                role: 'tool',
+                name: toolCall.function.name,
+                content: `Error: ${error.message}`
+            };
+        }
     }
 
     // Message handling
+    function updateMessageCount() {
+        const count = messageHistory.length;
+        elements.messageCountDisplay.text(`${count} message${count !== 1 ? 's' : ''}`);
+    }
+
     function createMessageElement(content, isUser = false, imageUrl = null) {
         const messageDiv = $('<div>')
             .addClass('chat-message')
             .addClass(isUser ? 'user' : 'ai');
+
+        const containerDiv = $('<div>')
+            .addClass('chat-message-container');
+
+        const headerDiv = $('<div>')
+            .addClass('chat-message-header');
+
+        if (!isUser) {
+            // Create and append AI avatar with error handling
+            const avatarImg = $('<img>')
+                .attr({
+                    src: wpbedrock_chat.ai_avatar || `${wpbedrock_chat.plugin_url}images/ai-avatar.svg`,
+                    alt: 'AI',
+                    width: 35,
+                    height: 35
+                })
+                .css('border-radius', '50%')
+                .on('error', function() {
+                    // If image fails to load, replace with a fallback
+                    $(this).replaceWith(
+                        $('<div>')
+                            .css({
+                                width: '35px',
+                                height: '35px',
+                                borderRadius: '50%',
+                                backgroundColor: '#2271b1',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                color: '#fff',
+                                fontSize: '16px'
+                            })
+                            .text('AI')
+                    );
+                });
+            
+            headerDiv.append(avatarImg);
+        }
 
         const contentDiv = $('<div>')
             .addClass('message-content');
@@ -89,43 +179,19 @@ jQuery(document).ready(function($) {
             contentDiv.append($('<img>').attr('src', imageUrl).addClass('message-image'));
         }
 
-        // Render markdown for AI messages
-        if (!isUser) {
-            const rendered = md.render(content);
-            // Add copy button to code blocks
-            const withCopyButtons = rendered.replace(
-                /<pre><code class="language-([^"]+)">/g,
-                '<div class="code-block"><button class="copy-code button button-small">Copy</button><pre><code class="language-$1">'
-            ).replace(/<\/code><\/pre>/g, '</code></pre></div>');
-            contentDiv.html(withCopyButtons);
-            // Initialize syntax highlighting
+        if (!isUser && typeof content === 'string') {
+            // Process markdown and add the HTML content
+            contentDiv.html(processMarkdown(content));
+            // Initialize syntax highlighting for code blocks
             contentDiv.find('pre code').each(function(i, block) {
-                hljs.highlightElement(block);
+                window.hljs.highlightElement(block);
             });
         } else {
             contentDiv.text(content);
         }
 
-        messageDiv.append(contentDiv);
-
-        // Add action buttons for AI messages
-        if (!isUser) {
-            const actionsDiv = $('<div>')
-                .addClass('message-actions')
-                .append(
-                    $('<button>')
-                        .addClass('button button-small')
-                        .attr('title', 'Copy')
-                        .html('<span class="dashicons dashicons-clipboard"></span>')
-                        .on('click', () => copyToClipboard(content)),
-                    $('<button>')
-                        .addClass('button button-small')
-                        .attr('title', 'Regenerate')
-                        .html('<span class="dashicons dashicons-update"></span>')
-                        .on('click', () => regenerateResponse(content))
-                );
-            messageDiv.append(actionsDiv);
-        }
+        containerDiv.append(headerDiv, contentDiv);
+        messageDiv.append(containerDiv);
 
         return messageDiv;
     }
@@ -138,26 +204,127 @@ jQuery(document).ready(function($) {
         }
         
         elements.messagesContainer.append(messageDiv);
-        elements.messagesContainer.scrollTop(elements.messagesContainer[0].scrollHeight);
+        scrollToBottom();
 
-        // Add to message history with proper format for vision models
+        // Only include image in history if URL is valid
+        const messageContent = imageUrl && imageUrl !== 'null' ? [
+            { type: 'text', text: content },
+            { type: 'image_url', image_url: { url: imageUrl } }
+        ] : content;
+
         messageHistory.push({
             role: isUser ? 'user' : 'assistant',
-            content: imageUrl ? [
-                { type: 'text', text: content },
-                { type: 'image_url', image_url: { url: imageUrl } }
-            ] : content
+            content: messageContent
         });
 
+        updateMessageCount();
         return messageDiv;
     }
 
     function updateStreamingMessage(text) {
         if (!currentStreamingMessage) return;
-        
-        // Render markdown for the accumulated text
-        currentStreamingMessage.html(md.render(text));
+        currentStreamingMessage.html(processMarkdown(text));
+        scrollToBottom();
+    }
+
+    function scrollToBottom() {
         elements.messagesContainer.scrollTop(elements.messagesContainer[0].scrollHeight);
+    }
+
+    // Stream Processing
+    async function processMessage(data) {
+        if (!data) return;
+
+        try {
+            // Handle tool calls
+            if (data.contentBlockStart?.start?.toolUse) {
+                const toolUse = data.contentBlockStart.start.toolUse;
+                toolIndex += 1;
+                runTools.push({
+                    id: toolUse.toolUseId,
+                    type: 'function',
+                    function: {
+                        name: toolUse.name || '',
+                        arguments: '{}'
+                    }
+                });
+                return;
+            }
+
+            // Handle tool input
+            if (data.contentBlockDelta?.delta?.toolUse?.input) {
+                if (runTools[toolIndex]) {
+                    runTools[toolIndex].function.arguments = data.contentBlockDelta.delta.toolUse.input;
+                    
+                    // Execute tool when arguments are complete
+                    const toolResult = await executeTool(runTools[toolIndex]);
+                    addMessage(`Tool Result (${toolResult.name}): ${toolResult.content}`, false);
+                }
+                return;
+            }
+
+            // Handle text content
+            if (data.output?.message?.content?.[0]?.text) {
+                remainText += data.output.message.content[0].text;
+                updateStreamingMessage(remainText);
+                return;
+            }
+
+            // Handle text delta
+            if (data.contentBlockDelta?.delta?.text) {
+                remainText += data.contentBlockDelta.delta.text;
+                updateStreamingMessage(remainText);
+                return;
+            }
+
+            // Handle various response formats
+            let newText = '';
+            if (data.delta?.text) {
+                newText = data.delta.text;
+            } else if (data.choices?.[0]?.message?.content) {
+                newText = data.choices[0].message.content;
+            } else if (data.content?.[0]?.text) {
+                newText = data.content[0].text;
+            } else if (data.generation) {
+                newText = data.generation;
+            } else if (data.outputText) {
+                newText = data.outputText;
+            } else if (data.response) {
+                newText = data.response;
+            } else if (data.output) {
+                newText = data.output;
+            }
+
+            if (newText) {
+                remainText += newText;
+                updateStreamingMessage(remainText);
+            }
+        } catch (e) {
+            console.warn('[WP Bedrock] Failed to process message:', e);
+        }
+    }
+
+    function processChunk(chunk) {
+        try {
+            const decoder = new TextDecoder('utf-8');
+            const text = decoder.decode(chunk);
+            const data = JSON.parse(text);
+
+            if (data.bytes) {
+                const decoded = atob(data.bytes);
+                try {
+                    const decodedJson = JSON.parse(decoded);
+                    processMessage(decodedJson);
+                } catch (e) {
+                    processMessage({ output: decoded });
+                }
+                return;
+            }
+
+            processMessage(data);
+        } catch (e) {
+            console.warn('[WP Bedrock] Failed to process chunk:', e);
+        }
     }
 
     // UI Feedback
@@ -168,7 +335,7 @@ jQuery(document).ready(function($) {
             .append($('<span>'))
             .append($('<span>'));
         elements.messagesContainer.append(indicator);
-        elements.messagesContainer.scrollTop(elements.messagesContainer[0].scrollHeight);
+        scrollToBottom();
     }
 
     function removeTypingIndicator() {
@@ -187,11 +354,16 @@ jQuery(document).ready(function($) {
         if (confirm('Are you sure you want to clear the chat history?')) {
             elements.messagesContainer.empty();
             messageHistory = [];
-            addMessage(wpbedrock_chat.initial_message || 'Hello! How can I help you today?', false);
+            addMessage(wpbedrock_chat.initial_message || 'Hello! How can I assist you today?', false);
+            updateMessageCount();
         }
     }
 
-    function exportChat() {
+    function refreshChat() {
+        location.reload();
+    }
+
+    async function copyChat() {
         const chatContent = messageHistory.map(msg => {
             const role = msg.role === 'assistant' ? 'AI' : 'User';
             const content = Array.isArray(msg.content) 
@@ -200,533 +372,153 @@ jQuery(document).ready(function($) {
             return `${role}: ${content}`;
         }).join('\n\n');
 
-        const blob = new Blob([chatContent], { type: 'text/plain' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'chat-history.txt';
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-    }
-
-    // Utility Functions
-    async function copyToClipboard(text) {
         try {
-            await navigator.clipboard.writeText(text);
-            // Show success feedback
-            const button = $('.message-actions .dashicons-clipboard').parent();
+            await navigator.clipboard.writeText(chatContent);
+            const button = elements.exportChatButton;
             button.addClass('button-primary');
             setTimeout(() => button.removeClass('button-primary'), 1000);
         } catch (err) {
-            console.error('Failed to copy text:', err);
+            console.error('[WP Bedrock] Failed to copy chat:', err);
+            alert('Failed to copy chat to clipboard');
         }
     }
 
-    function regenerateResponse(previousPrompt) {
-        // Remove the last assistant message
-        messageHistory.pop();
-        elements.messagesContainer.children().last().remove();
+    function shareChat() {
+        const chatContent = encodeURIComponent(
+            messageHistory.map(msg => {
+                const role = msg.role === 'assistant' ? 'AI' : 'User';
+                const content = Array.isArray(msg.content) 
+                    ? msg.content.map(c => c.text || '[Image]').join('\n')
+                    : msg.content;
+                return `${role}: ${content}`;
+            }).join('\n\n')
+        );
+
+        const shareUrl = `https://twitter.com/intent/tweet?text=${chatContent}`;
+        window.open(shareUrl, '_blank');
+    }
+
+    function toggleFullscreen() {
+        isFullscreen = !isFullscreen;
+        elements.chatContainer.toggleClass('fullscreen');
+        elements.fullscreenButton.find('.dashicons')
+            .toggleClass('dashicons-fullscreen dashicons-fullscreen-exit');
         
-        // Resend the last user message
-        sendMessage(previousPrompt);
-    }
-
-    // Image Handling
-    function handleImageUpload(file) {
-        if (!file || !file.type.startsWith('image/')) {
-            alert('Please select a valid image file.');
-            return;
+        if (isFullscreen) {
+            $('body').css('overflow', 'hidden');
+        } else {
+            $('body').css('overflow', '');
         }
-
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            currentImage = e.target.result;
-            elements.previewImage.attr('src', currentImage);
-            elements.imagePreview.show();
-        };
-        reader.onerror = function(e) {
-            console.error('Error reading image:', e);
-            alert('Error reading image file');
-        };
-        reader.readAsDataURL(file);
     }
 
-    function removeImage() {
-        currentImage = null;
-        elements.previewImage.attr('src', '');
+    // Layout Management
+    function toggleLayout() {
+        elements.chatContainer.toggleClass('wide-layout');
+        elements.layoutTrigger.toggleClass('active');
+    }
+
+    // Chat API
+    async function sendMessage() {
+        const message = elements.messageInput.val().trim();
+        if (!message || isProcessing) return;
+
+        // Get image URL only if preview is visible and image source is valid
+        const imageUrl = elements.imagePreview.is(':visible') ? 
+            (elements.previewImage.attr('src') || null) : null;
+        addMessage(message, true, imageUrl);
+        elements.messageInput.val('');
         elements.imagePreview.hide();
         elements.imageUpload.val('');
-    }
-
-    // Message Formatting
-    function formatRequestBody(messages, modelConfig) {
-        const model = modelConfig.model;
-        const visionModel = model.includes('claude-3') || model.includes('gpt-4-vision');
-
-        // Get tools if available
-        const tools = (wpbedrock_chat.tools || []).map(tool => ({
-            function: {
-                name: tool.name,
-                description: tool.description,
-                parameters: tool.parameters
-            }
-        }));
-
-        // Handle Nova models
-        if (model.includes('amazon.nova')) {
-            const systemMessage = messages.find(m => m.role === 'system');
-            const conversationMessages = messages.filter(m => m.role !== 'system');
-
-            const requestBody = {
-                schemaVersion: "messages-v1",
-                messages: conversationMessages.map(message => ({
-                    role: message.role,
-                    content: Array.isArray(message.content) 
-                        ? message.content.map(item => {
-                            if (item.text || typeof item === 'string') {
-                                return { text: item.text || item };
-                            }
-                            if (item.image_url?.url) {
-                                const url = item.image_url.url;
-                                const colonIndex = url.indexOf(':');
-                                const semicolonIndex = url.indexOf(';');
-                                const comma = url.indexOf(',');
-                                const mimeType = url.slice(colonIndex + 1, semicolonIndex);
-                                const format = mimeType.split('/')[1];
-                                const data = url.slice(comma + 1);
-                                return {
-                                    image: {
-                                        format,
-                                        source: { bytes: data }
-                                    }
-                                };
-                            }
-                            return item;
-                        })
-                        : [{ text: message.content }]
-                })),
-                inferenceConfig: {
-                    temperature: modelConfig.temperature || 0.7,
-                    top_p: modelConfig.top_p || 0.9,
-                    top_k: modelConfig.top_k || 50,
-                    max_new_tokens: modelConfig.max_tokens || 1000,
-                    stopSequences: modelConfig.stop || []
-                }
-            };
-
-            if (systemMessage) {
-                requestBody.system = [{ text: systemMessage.content }];
-            }
-
-            if (tools.length > 0) {
-                requestBody.toolConfig = {
-                    tools: tools.map(tool => ({
-                        toolSpec: {
-                            name: tool.function.name,
-                            description: tool.function.description,
-                            inputSchema: {
-                                json: {
-                                    type: "object",
-                                    properties: tool.function.parameters.properties,
-                                    required: tool.function.parameters.required
-                                }
-                            }
-                        }
-                    })),
-                    toolChoice: { auto: {} }
-                };
-            }
-
-            return requestBody;
-        }
-
-        // Handle Titan models
-        if (model.startsWith('amazon.titan')) {
-            const inputText = messages
-                .map(message => `${message.role}: ${Array.isArray(message.content) 
-                    ? message.content.map(c => c.text || '[Image]').join('\n')
-                    : message.content}`)
-                .join('\n\n');
-
-            return {
-                inputText,
-                textGenerationConfig: {
-                    maxTokenCount: modelConfig.max_tokens,
-                    temperature: modelConfig.temperature,
-                    stopSequences: []
-                }
-            };
-        }
-
-        // Handle Mistral models
-        if (model.includes('mistral.mistral')) {
-            const formattedMessages = messages.map(message => ({
-                role: MistralMapper[message.role] || 'user',
-                content: Array.isArray(message.content)
-                    ? message.content.map(c => c.text || '[Image]').join('\n')
-                    : message.content
-            }));
-
-            const requestBody = {
-                messages: formattedMessages,
-                max_tokens: modelConfig.max_tokens || 4096,
-                temperature: modelConfig.temperature || 0.7,
-                top_p: modelConfig.top_p || 0.9
-            };
-
-            if (tools.length > 0) {
-                requestBody.tool_choice = 'auto';
-                requestBody.tools = tools;
-            }
-
-            return requestBody;
-        }
-
-        // Handle Claude models
-        if (model.includes('anthropic.claude')) {
-            const formattedMessages = messages.map(message => {
-                const role = ClaudeMapper[message.role] || 'user';
-                
-                if (!visionModel || typeof message.content === 'string') {
-                    return {
-                        role,
-                        content: message.content
-                    };
-                }
-
-                return {
-                    role,
-                    content: message.content.map(item => {
-                        if (item.text) {
-                            return {
-                                type: 'text',
-                                text: item.text
-                            };
-                        }
-                        if (item.image_url?.url) {
-                            const url = item.image_url.url;
-                            const colonIndex = url.indexOf(':');
-                            const semicolonIndex = url.indexOf(';');
-                            const comma = url.indexOf(',');
-                            const mimeType = url.slice(colonIndex + 1, semicolonIndex);
-                            const encodeType = url.slice(semicolonIndex + 1, comma);
-                            const data = url.slice(comma + 1);
-
-                            return {
-                                type: 'image',
-                                source: {
-                                    type: encodeType,
-                                    media_type: mimeType,
-                                    data
-                                }
-                            };
-                        }
-                        return item;
-                    })
-                };
-            });
-
-            const requestBody = {
-                anthropic_version: wpbedrock_chat.anthropic_version || '2023-01-01',
-                max_tokens: modelConfig.max_tokens,
-                messages: formattedMessages,
-                temperature: modelConfig.temperature,
-                top_p: modelConfig.top_p || 0.9,
-                top_k: modelConfig.top_k || 5
-            };
-
-            if (tools.length > 0) {
-                requestBody.tools = tools.map(tool => ({
-                    name: tool.function.name,
-                    description: tool.function.description,
-                    input_schema: tool.function.parameters
-                }));
-            }
-
-            return requestBody;
-        }
-
-        // Default format for other models
-        return {
-            messages: messages.map(message => ({
-                role: message.role,
-                content: message.content
-            })),
-            ...modelConfig
-        };
-    }
-
-    // Streaming Implementation
-    function setupEventSource(url) {
-        if (currentEventSource) {
-            currentEventSource.close();
-        }
-
-        currentEventSource = new EventSource(url);
-        let accumulatedText = '';
-
-        currentEventSource.onopen = function() {
-            console.log('Stream connection opened');
-            removeTypingIndicator();
-        };
-
-        currentEventSource.onmessage = function(e) {
-            try {
-                const data = JSON.parse(e.data);
-                
-                if (data.done) {
-                    currentEventSource.close();
-                    setProcessingState(false);
-                } else if (data.error) {
-                    handleStreamError('Server error: ' + data.error);
-                } else if (data.chunk) {
-                    const chunk = JSON.parse(data.chunk.bytes);
-                    
-                    if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
-                        accumulatedText += chunk.delta.text;
-                        updateStreamingMessage(accumulatedText);
-                    } else if (chunk.type === 'tool_calls') {
-                        handleToolCalls(chunk.tool_calls);
-                    }
-                }
-            } catch (error) {
-                console.error('Error parsing stream message:', error);
-                handleStreamError('Invalid response format');
-            }
-        };
-
-        currentEventSource.onerror = function(e) {
-            handleStreamError('Connection error');
-        };
-
-        return currentEventSource;
-    }
-
-    function handleStreamError(message) {
-        console.error(message);
-        if (currentStreamingMessage) {
-            currentStreamingMessage.text('Error: ' + message);
-        } else {
-            addMessage('Error: ' + message);
-        }
-        removeTypingIndicator();
-        setProcessingState(false);
-        
-        if (currentEventSource) {
-            currentEventSource.close();
-            currentEventSource = null;
-        }
-    }
-
-    async function handleToolCalls(toolCalls) {
-        const toolResults = [];
-        
-        for (const tool of toolCalls) {
-            try {
-                const functionName = tool.function.name;
-                const args = JSON.parse(tool.function.arguments);
-                
-                if (wpbedrock_chat.tools && wpbedrock_chat.tools[functionName]) {
-                    const result = await wpbedrock_chat.tools[functionName](args);
-                    toolResults.push({
-                        tool_call_id: tool.id,
-                        content: typeof result === 'string' ? result : JSON.stringify(result)
-                    });
-                }
-            } catch (error) {
-                console.error('Tool call error:', error);
-                toolResults.push({
-                    tool_call_id: tool.id,
-                    content: `Error: ${error.message}`
-                });
-            }
-        }
-
-        // Add tool calls and results to message history
-        messageHistory.push(
-            {
-                role: 'assistant',
-                content: '',
-                tool_calls: toolCalls
-            },
-            ...toolResults.map(result => ({
-                role: 'tool',
-                content: result.content,
-                tool_call_id: result.tool_call_id
-            }))
-        );
-    }
-
-    // Message Sending
-    async function sendMessage(overrideMessage = null) {
-        const message = overrideMessage || elements.messageInput.val().trim();
-        if ((!message && !currentImage) || isProcessing) return;
 
         setProcessingState(true);
-
-        // Add user message to chat
-        addMessage(message, true, currentImage);
-        elements.messageInput.val('');
-        removeImage();
-
-        // Prepare request parameters
-        const modelConfig = {
-            model: wpbedrock_chat.default_model,
-            temperature: wpbedrock_chat.default_temperature,
-            max_tokens: wpbedrock_chat.default_max_tokens,
-            top_p: wpbedrock_chat.default_top_p,
-            top_k: wpbedrock_chat.default_top_k,
-            stop: wpbedrock_chat.default_stop_sequences
-        };
-
-        const requestBody = formatRequestBody(
-            [
-                // Add system prompt if configured
-                ...(wpbedrock_chat.default_system_prompt ? [{
-                    role: 'system',
-                    content: wpbedrock_chat.default_system_prompt
-                }] : []),
-                ...messageHistory.slice(-8) // Keep last 4 exchanges
-            ],
-            modelConfig
-        );
-
-        const params = new URLSearchParams({
-            action: 'wpbedrock_chat_message',
-            nonce: wpbedrock_chat.nonce,
-            stream: '1',
-            body: JSON.stringify(requestBody)
-        });
-
-        // Show typing indicator
         showTypingIndicator();
 
-        // Setup streaming
         try {
-            setupEventSource(`${wpbedrock_chat.ajaxurl}?${params.toString()}`);
+            const response = await fetch(wpbedrock_chat.ajaxurl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: new URLSearchParams({
+                    action: 'wpbedrock_chat',
+                    nonce: wpbedrock_chat.nonce,
+                    message: message,
+                    image: imageUrl,
+                    history: JSON.stringify(messageHistory.slice(-wpbedrock_chat.context_length)), // Only send last N messages
+                    stream: wpbedrock_chat.enable_stream ? '1' : '0',
+                    model: wpbedrock_chat.default_model,
+                    temperature: wpbedrock_chat.default_temperature,
+                    system_prompt: wpbedrock_chat.default_system_prompt,
+                    tools: JSON.stringify(selectedTools)
+                })
+            });
+
+            if (!response.ok) throw new Error('Network response was not ok');
+
+            const reader = response.body.getReader();
+            remainText = '';
+            runTools = [];
+            toolIndex = -1;
+
+            removeTypingIndicator();
+            addMessage('', false); // Create empty message for streaming
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                await processChunk(value);
+            }
         } catch (error) {
-            console.error('Failed to setup EventSource:', error);
-            handleStreamError('Could not connect to the server');
+            console.error('[WP Bedrock] Chat error:', error);
+            removeTypingIndicator();
+            let errorMessage = 'An error occurred. Please try again.';
+            if (error.message.includes('AWS credentials not configured')) {
+                errorMessage = 'AWS credentials are not configured. Please go to Bedrock AI Agent > Settings to configure your AWS credentials.';
+            }
+            addMessage(errorMessage, false);
+        } finally {
+            setProcessingState(false);
         }
     }
 
-    // Prompt Library
-    const promptLibrary = {
-        prompts: [
-            {
-                title: 'Code Review',
-                content: 'Please review this code and suggest improvements:\n\n'
-            },
-            {
-                title: 'Bug Fix',
-                content: 'I have a bug in my code. Here\'s the problem:\n\n'
-            },
-            {
-                title: 'Feature Planning',
-                content: 'Help me plan the implementation of this feature:\n\n'
-            },
-            {
-                title: 'Documentation',
-                content: 'Help me write documentation for:\n\n'
-            }
-        ],
-        show() {
-            const $dialog = $('<div>')
-                .attr('title', 'Prompt Library')
-                .addClass('prompt-library-dialog');
-
-            const $list = $('<div>').addClass('prompt-list');
-            this.prompts.forEach(prompt => {
-                $('<div>')
-                    .addClass('prompt-item')
-                    .append(
-                        $('<h4>').text(prompt.title),
-                        $('<p>').text(prompt.content.substring(0, 100) + '...'),
-                        $('<button>')
-                            .addClass('button button-small')
-                            .text('Use')
-                            .on('click', () => {
-                                elements.messageInput.val(prompt.content);
-                                $dialog.dialog('close');
-                            })
-                    )
-                    .appendTo($list);
-            });
-
-            $dialog.append($list);
-
-            $dialog.dialog({
-                width: 500,
-                modal: true,
-                classes: {
-                    'ui-dialog': 'wp-dialog'
-                },
-                close: function() {
-                    $(this).dialog('destroy').remove();
+    // Initialize tools modal
+    function initializeToolsModal() {
+        const toolsModal = $('#tools-modal');
+        
+        // Initialize jQuery UI Dialog
+        toolsModal.dialog({
+            autoOpen: false,
+            modal: true,
+            width: 600,
+            dialogClass: 'tools-dialog'
+        });
+        
+        // Handle tool selection
+        $('.tool-item').on('click', function() {
+            const $this = $(this);
+            const toolDefinition = JSON.parse($this.attr('data-tool-definition'));
+            
+            // Toggle selection
+            $this.toggleClass('selected');
+            
+            if ($this.hasClass('selected')) {
+                if (!selectedTools.find(t => t.function.name === toolDefinition.function.name)) {
+                    selectedTools.push(toolDefinition);
                 }
-            });
-        }
-    };
-
-    // Conversation Masks
-    const conversationMasks = {
-        masks: [
-            {
-                title: 'Code Assistant',
-                systemPrompt: 'You are an expert programmer. Help users with coding questions, debugging, and best practices. Provide clear explanations and code examples when appropriate.'
-            },
-            {
-                title: 'Technical Writer',
-                systemPrompt: 'You are a technical documentation expert. Help users write clear, concise, and accurate documentation for their code and projects.'
-            },
-            {
-                title: 'DevOps Engineer',
-                systemPrompt: 'You are a DevOps expert. Help users with deployment, infrastructure, and automation questions. Provide practical solutions and best practices.'
+            } else {
+                selectedTools = selectedTools.filter(t => t.function.name !== toolDefinition.function.name);
             }
-        ],
-        show() {
-            const $dialog = $('<div>')
-                .attr('title', 'Conversation Masks')
-                .addClass('masks-dialog');
-
-            const $list = $('<div>').addClass('masks-list');
-            this.masks.forEach(mask => {
-                $('<div>')
-                    .addClass('mask-item')
-                    .append(
-                        $('<h4>').text(mask.title),
-                        $('<p>').text(mask.systemPrompt.substring(0, 100) + '...'),
-                        $('<button>')
-                            .addClass('button button-small')
-                            .text('Apply')
-                            .on('click', () => {
-                                clearChat();
-                                $dialog.dialog('close');
-                            })
-                    )
-                    .appendTo($list);
-            });
-
-            $dialog.append($list);
-
-            $dialog.dialog({
-                width: 500,
-                modal: true,
-                classes: {
-                    'ui-dialog': 'wp-dialog'
-                },
-                close: function() {
-                    $(this).dialog('destroy').remove();
-                }
-            });
-        }
-    };
+        });
+    }
 
     // Event Listeners
     function setupEventListeners() {
-        elements.sendButton.on('click', () => sendMessage());
+        // Open modal on grid button click
+        $('#wpaicg-grid-trigger').on('click', function() {
+            $('#tools-modal').dialog('open');
+        });
+
+        elements.sendButton.on('click', sendMessage);
         elements.stopButton.on('click', () => {
             if (currentEventSource) {
                 currentEventSource.close();
@@ -738,28 +530,162 @@ jQuery(document).ready(function($) {
         elements.imageTrigger.on('click', () => elements.imageUpload.click());
         elements.imageUpload.on('change', function() {
             if (this.files && this.files[0]) {
-                handleImageUpload(this.files[0]);
+                const file = this.files[0];
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    elements.previewImage.attr('src', e.target.result);
+                    elements.imagePreview.show();
+                };
+                reader.readAsDataURL(file);
             }
         });
         
-        elements.removeImageButton.on('click', removeImage);
-        elements.clearChatButton.on('click', clearChat);
-        elements.exportChatButton.on('click', exportChat);
-        elements.promptTrigger.on('click', () => promptLibrary.show());
-        elements.maskTrigger.on('click', () => conversationMasks.show());
+        elements.removeImageButton.on('click', () => {
+            elements.imagePreview.hide();
+            elements.imageUpload.val('');
+        });
 
-        elements.messageInput.on('keypress', function(e) {
-            if (e.which === 13 && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
+        elements.clearChatButton.on('click', clearChat);
+        elements.refreshChatButton.on('click', refreshChat);
+        elements.exportChatButton.on('click', copyChat);
+        elements.shareChatButton.on('click', shareChat);
+        elements.fullscreenButton.on('click', toggleFullscreen);
+        elements.layoutTrigger.on('click', toggleLayout);
+
+        elements.messageInput
+            .on('keydown', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            })
+            .on('input', function() {
+                this.style.height = 'auto';
+                this.style.height = (this.scrollHeight) + 'px';
+            });
+
+        $(document).on('keydown', function(e) {
+            if (e.key === 'Escape' && isFullscreen) {
+                toggleFullscreen();
             }
-        }).on('input', function() {
-            this.style.height = 'auto';
-            this.style.height = (this.scrollHeight) + 'px';
         });
     }
 
+    // Initialize libraries and setup markdown processing
+    let md;
+
+    // Process markdown content
+    function processMarkdown(content) {
+        try {
+            return md.render(content);
+        } catch (e) {
+            console.warn('[WP Bedrock] Failed to process markdown:', e);
+            return content;
+        }
+    }
+
+    function waitForLibraries() {
+        return new Promise((resolve, reject) => {
+            let attempts = 0;
+            const maxAttempts = 200; // 20 seconds total
+            const interval = 100; // Check every 100ms
+
+            function checkLibraries() {
+                console.log('Checking libraries...');
+                console.log('jQuery UI:', typeof $.fn.dialog !== 'undefined');
+                console.log('markdownit:', typeof window.markdownit !== 'undefined');
+                console.log('hljs:', typeof window.hljs !== 'undefined');
+
+                // First check for jQuery UI as it's loaded by WordPress
+                if (typeof $.fn.dialog === 'undefined') {
+                    if (attempts < maxAttempts) {
+                        attempts++;
+                        setTimeout(checkLibraries, interval);
+                    } else {
+                        reject(new Error('jQuery UI Dialog failed to load'));
+                    }
+                    return;
+                }
+
+                // Then check for markdown-it
+                if (typeof window.markdownit === 'undefined') {
+                    if (attempts < maxAttempts) {
+                        attempts++;
+                        setTimeout(checkLibraries, interval);
+                    } else {
+                        reject(new Error('markdown-it failed to load'));
+                    }
+                    return;
+                }
+
+                // Finally check for highlight.js
+                if (typeof window.hljs === 'undefined') {
+                    if (attempts < maxAttempts) {
+                        attempts++;
+                        setTimeout(checkLibraries, interval);
+                    } else {
+                        reject(new Error('highlight.js failed to load'));
+                    }
+                    return;
+                }
+
+                // All libraries are loaded
+                resolve();
+            }
+
+            checkLibraries();
+        });
+    }
+
+    function initializeLibraries() {
+        try {
+            md = window.markdownit({
+                html: true,
+                linkify: true,
+                typographer: true,
+                highlight: function (str, lang) {
+                    if (lang && window.hljs.getLanguage(lang)) {
+                        try {
+                            return window.hljs.highlight(str, { language: lang }).value;
+                        } catch (__) {}
+                    }
+                    return window.hljs.highlightAuto(str).value;
+                }
+            });
+
+            window.hljs.configure({
+                ignoreUnescapedHTML: true,
+                languages: ['javascript', 'python', 'php', 'java', 'cpp', 'css', 'xml', 'bash', 'json']
+            });
+
+            return true;
+        } catch (error) {
+            console.error('[WP Bedrock] Failed to initialize libraries:', error);
+            return false;
+        }
+    }
+
     // Initialize
-    initializeUI();
-    setupEventListeners();
-});
+    waitForLibraries()
+        .then(() => {
+            if (initializeLibraries()) {
+                initializeToolsModal(); // Initialize tools modal first
+                setupEventListeners();
+                updateMessageCount();
+                
+                // Add initial message if chat is empty
+                if (messageHistory.length === 0) {
+                    addMessage(wpbedrock_chat.initial_message || 'Hello! How can I assist you today?', false);
+                }
+            } else {
+                throw new Error('Failed to initialize libraries');
+            }
+        })
+        .catch(error => {
+            console.error('[WP Bedrock] Initialization failed:', error);
+            $('.chat-container').html('<div class="error-message">Error: Chat initialization failed. Please refresh the page.</div>');
+        });
+}
+
+// Start initialization
+initChatbot();

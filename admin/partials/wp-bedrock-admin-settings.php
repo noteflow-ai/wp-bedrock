@@ -51,11 +51,11 @@ if (!defined('ABSPATH')) exit;
                         <td>
                             <select name="wpbedrock_model_id" class="widefat">
                                 <optgroup label="Claude 3">
-                                    <option value="anthropic.claude-3-haiku-20240307-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'anthropic.claude-3-haiku-20240307-v1:0'); ?>>Claude 3 Haiku - Fast and efficient</option>
-                                    <option value="anthropic.claude-3-5-haiku-20241022-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'anthropic.claude-3-5-haiku-20241022-v1:0'); ?>>Claude 3.5 Haiku - Enhanced efficiency</option>
-                                    <option value="anthropic.claude-3-sonnet-20240229-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'anthropic.claude-3-sonnet-20240229-v1:0'); ?>>Claude 3 Sonnet - Balanced performance</option>
-                                    <option value="anthropic.claude-3-5-sonnet-20241022-v2:0" <?php selected(get_option('wpbedrock_model_id'), 'anthropic.claude-3-5-sonnet-20241022-v2:0'); ?>>Claude 3.5 Sonnet - Enhanced balance</option>
-                                    <option value="anthropic.claude-3-opus-20240229-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'anthropic.claude-3-opus-20240229-v1:0'); ?>>Claude 3 Opus - Most capable</option>
+                                    <option value="us.anthropic.claude-3-haiku-20240307-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.anthropic.claude-3-haiku-20240307-v1:0'); ?>>Claude 3 Haiku - Fast and efficient</option>
+                                    <option value="us.anthropic.claude-3-5-haiku-20241022-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.anthropic.claude-3-5-haiku-20241022-v1:0'); ?>>Claude 3.5 Haiku - Enhanced efficiency</option>
+                                    <option value="us.anthropic.claude-3-sonnet-20240229-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.anthropic.claude-3-sonnet-20240229-v1:0'); ?>>Claude 3 Sonnet - Balanced performance</option>
+                                    <option value="us.anthropic.claude-3-5-sonnet-20241022-v2:0" <?php selected(get_option('wpbedrock_model_id'), 'us.anthropic.claude-3-5-sonnet-20241022-v2:0'); ?>>Claude 3.5 Sonnet - Enhanced balance</option>
+                                    <option value="us.anthropic.claude-3-opus-20240229-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.anthropic.claude-3-opus-20240229-v1:0'); ?>>Claude 3 Opus - Most capable</option>
                                 </optgroup>
                                 <optgroup label="AWS Nova">
                                     <option value="us.amazon.nova-micro-v1:0" <?php selected(get_option('wpbedrock_model_id'), 'us.amazon.nova-micro-v1:0'); ?>>Nova Micro - Most efficient</option>
@@ -99,90 +99,7 @@ if (!defined('ABSPATH')) exit;
 
             <!-- Chat Settings Section -->
             <div class="settings-section">
-                <h2>Image Generation Settings</h2>
-        <table class="form-table">
-            <tr>
-                <th scope="row">Default Image Model</th>
-                <td>
-                    <select name="wpbedrock_image_model_id">
-                        <optgroup label="Stable Diffusion Models">
-                            <?php foreach ($image_models as $model): ?>
-                                <?php if ($model['type'] === 'stable-diffusion'): ?>
-                                    <option value="<?php echo esc_attr($model['id']); ?>" <?php selected(get_option('wpbedrock_image_model_id'), $model['id']); ?>>
-                                        <?php echo esc_html($model['name']); ?>
-                                    </option>
-                                <?php endif; ?>
-                            <?php endforeach; ?>
-                        </optgroup>
-                        <optgroup label="Nova Canvas Models">
-                            <?php foreach ($image_models as $model): ?>
-                                <?php if ($model['type'] === 'nova-canvas'): ?>
-                                    <option value="<?php echo esc_attr($model['id']); ?>" <?php selected(get_option('wpbedrock_image_model_id'), $model['id']); ?>>
-                                        <?php echo esc_html($model['name']); ?>
-                                    </option>
-                                <?php endif; ?>
-                            <?php endforeach; ?>
-                        </optgroup>
-                    </select>
-                    <p class="description">Select the default model for image generation.</p>
-                </td>
-            </tr>
-            <tr>
-                <th scope="row">Default Style Preset</th>
-                <td>
-                    <select name="wpbedrock_image_style_preset">
-                        <?php foreach ($style_presets as $value => $label): ?>
-                            <option value="<?php echo esc_attr($value); ?>" <?php selected(get_option('wpbedrock_image_style_preset'), $value); ?>>
-                                <?php echo esc_html($label); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                    <p class="description">Select the default style preset for Stable Diffusion models.</p>
-                </td>
-            </tr>
-            <tr>
-                <th scope="row">Default Image Size</th>
-                <td>
-                    <input type="number" name="wpbedrock_image_width" value="<?php echo esc_attr(get_option('wpbedrock_image_width', '1024')); ?>" min="512" max="1024" step="8" style="width: 80px;">
-                    ×
-                    <input type="number" name="wpbedrock_image_height" value="<?php echo esc_attr(get_option('wpbedrock_image_height', '1024')); ?>" min="512" max="1024" step="8" style="width: 80px;">
-                    <p class="description">Set the default image dimensions (width × height).</p>
-                </td>
-            </tr>
-            <tr>
-                <th scope="row">Default Steps</th>
-                <td>
-                    <input type="number" name="wpbedrock_image_steps" value="<?php echo esc_attr(get_option('wpbedrock_image_steps', '50')); ?>" min="10" max="150" style="width: 80px;">
-                    <p class="description">Number of denoising steps. Higher values produce better quality but take longer.</p>
-                </td>
-            </tr>
-            <tr>
-                <th scope="row">Default CFG Scale</th>
-                <td>
-                    <input type="number" name="wpbedrock_image_cfg_scale" value="<?php echo esc_attr(get_option('wpbedrock_image_cfg_scale', '7')); ?>" min="0" max="35" step="0.1" style="width: 80px;">
-                    <p class="description">How closely to follow the prompt. Higher values produce images that more closely match the prompt but may be less creative.</p>
-                </td>
-            </tr>
-            <tr>
-                <th scope="row">Default Quality</th>
-                <td>
-                    <select name="wpbedrock_image_quality">
-                        <option value="standard" <?php selected(get_option('wpbedrock_image_quality'), 'standard'); ?>>Standard</option>
-                        <option value="premium" <?php selected(get_option('wpbedrock_image_quality'), 'premium'); ?>>Premium</option>
-                    </select>
-                    <p class="description">Quality setting for Nova Canvas models. Premium quality takes longer but produces better results.</p>
-                </td>
-            </tr>
-            <tr>
-                <th scope="row">Default Negative Prompt</th>
-                <td>
-                    <textarea name="wpbedrock_image_negative_prompt" rows="3" class="large-text"><?php echo esc_textarea(get_option('wpbedrock_image_negative_prompt', '')); ?></textarea>
-                    <p class="description">Default negative prompt to avoid unwanted elements in generated images. For example: "blurry, low quality, distorted, watermark"</p>
-                </td>
-            </tr>
-        </table>
-
-        <h2>Chat Settings</h2>
+                <h2>Chat Settings</h2>
                 <table class="form-table">
                     <tr valign="top">
                         <th scope="row">Default System Prompt</th>

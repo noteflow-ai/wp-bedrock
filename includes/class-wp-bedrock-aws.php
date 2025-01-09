@@ -91,51 +91,30 @@ class WP_Bedrock_AWS {
                 }
             }
 
+            // Format Nova request body
             $request_body = [
                 'schemaVersion' => 'messages-v1',
-                'messages' => array_map(function($message) use ($model_id) {
-                    $content = is_array($message['content']) ? $message['content'] : [['text' => $message['content']]];
-                    return [
-                        'role' => $message['role'],
-                        'content' => array_map(function($item) use ($model_id) {
+                'messages' => array_map(function($message) {
+                    $content = [];
+                    
+                    if (is_string($message['content'])) {
+                        $content[] = ['text' => $message['content']];
+                    } else if (is_array($message['content'])) {
+                        foreach ($message['content'] as $item) {
                             if (isset($item['text']) || is_string($item)) {
-                                return ['text' => is_string($item) ? $item : $item['text']];
-                            }
-                            if (isset($item['image_url'])) {
+                                $content[] = ['text' => is_string($item) ? $item : $item['text']];
+                            } else if (isset($item['image_url']) && isset($item['image_url']['url']) && $item['image_url']['url'] !== 'null') {
                                 $url = $item['image_url']['url'];
                                 $colonIndex = strpos($url, ':');
                                 $semicolonIndex = strpos($url, ';');
                                 $comma = strpos($url, ',');
                                 
-                                $mimeType = substr($url, $colonIndex + 1, $semicolonIndex - $colonIndex - 1);
-                                $format = explode('/', $mimeType)[1];
-                                $data = substr($url, $comma + 1);
-                                
-                                // Handle different model types
-                                if (strpos($model_id, 'anthropic.claude-3') === 0) {
-                                    // Claude 3 image format
-                                    return [
-                                        'type' => 'image',
-                                        'source' => [
-                                            'type' => 'base64',
-                                            'media_type' => $mimeType,
-                                            'data' => $data
-                                        ]
-                                    ];
-                                } else if (strpos($model_id, 'amazon.nova-lite') === 0 || 
-                                         strpos($model_id, 'amazon.nova-pro') === 0) {
-                                    // Nova Lite/Pro image format
-                                    return [
-                                        'image' => [
-                                            'format' => $format,
-                                            'source' => [
-                                                'bytes' => $data
-                                            ]
-                                        ]
-                                    ];
-                                } else {
-                                    // Default Nova format
-                                    return [
+                                if ($colonIndex !== false && $semicolonIndex !== false && $comma !== false) {
+                                    $mimeType = substr($url, $colonIndex + 1, $semicolonIndex - $colonIndex - 1);
+                                    $format = explode('/', $mimeType)[1];
+                                    $data = substr($url, $comma + 1);
+                                    
+                                    $content[] = [
                                         'image' => [
                                             'format' => $format,
                                             'source' => [
@@ -145,8 +124,12 @@ class WP_Bedrock_AWS {
                                     ];
                                 }
                             }
-                            return $item;
-                        }, $content)
+                        }
+                    }
+                    
+                    return [
+                        'role' => $message['role'],
+                        'content' => $content
                     ];
                 }, $conversation_messages),
                 'inferenceConfig' => [
@@ -158,15 +141,15 @@ class WP_Bedrock_AWS {
                 ]
             ];
 
+            // Add system message if present
             if ($system_message) {
-                $request_body['system'] = [
-                    ['text' => is_array($system_message['content']) ? 
-                        implode("\n", array_map(function($c) { 
-                            return isset($c['text']) ? $c['text'] : ''; 
-                        }, $system_message['content'])) : 
-                        $system_message['content']
-                    ]
-                ];
+                $system_content = is_array($system_message['content']) 
+                    ? implode("\n", array_map(function($c) { 
+                        return isset($c['text']) ? $c['text'] : ''; 
+                    }, $system_message['content'])) 
+                    : $system_message['content'];
+                    
+                $request_body['system'] = [['text' => $system_content]];
             }
 
             if (!empty($tools)) {
@@ -191,119 +174,43 @@ class WP_Bedrock_AWS {
             }
         }
         // Claude models (including Claude 3 and 3.5)
-        else if (strpos($model_id, 'anthropic.claude') === 0) {
-            $keys = ['system', 'user'];
-            $flattened_messages = [];
+        else if (strpos($model_id, 'anthropic.claude') === 0 || strpos($model_id, 'us.anthropic.claude') === 0) {
+            // Handle Claude models
+            $processed_messages = [];
             
-            // Flatten messages and add assistant messages between consecutive user/system messages
-            foreach ($messages as $i => $message) {
-                if ($i > 0 && in_array($messages[$i-1]['role'], $keys) && in_array($message['role'], $keys)) {
-                    $flattened_messages[] = [
-                        'role' => 'assistant',
-                        'content' => ';'
-                    ];
-                }
-                
-                if (!$message['content']) continue;
+            foreach ($messages as $message) {
+                if (empty($message['content'])) continue;
                 if (is_string($message['content']) && !trim($message['content'])) continue;
                 
-                $flattened_messages[] = $message;
-            }
-            
-            // Process messages
-            $formatted_messages = array_map(function($message) use ($model_id) {
-                $role = $message['role'];
-                $content = $message['content'];
-                
-                if ($role === 'system') {
-                    $system_content = is_array($content) ? 
-                        implode("\n", array_map(function($c) { 
-                            return isset($c['text']) ? $c['text'] : ''; 
-                        }, $content)) : 
-                        $content;
-                    
-                    return [
-                        'role' => 'user',
-                        'content' => [
-                            [
-                                'type' => 'text',
-                                'text' => "You are an AI assistant. Here is your system prompt:\n\n" . $system_content . "\n\nAssistant: I understand and will follow the system prompt provided."
-                            ]
-                        ]
-                    ];
+                // Convert system messages to user messages
+                if ($message['role'] === 'system') {
+                    $message['role'] = 'user';
                 }
                 
-                if (!is_array($content)) {
-                    return [
-                        'role' => $role,
-                        'content' => [['type' => 'text', 'text' => $content]]
-                    ];
-                }
-                
-                return [
-                    'role' => $role,
-                    'content' => array_map(function($item) use ($model_id) {
+                // Format content
+                if (is_array($message['content'])) {
+                    $text_parts = [];
+                    foreach ($message['content'] as $item) {
                         if (isset($item['text']) || is_string($item)) {
-                            return [
-                                'type' => 'text',
-                                'text' => is_string($item) ? $item : $item['text']
-                            ];
+                            $text_parts[] = is_string($item) ? $item : $item['text'];
                         }
-                        if (isset($item['image_url'])) {
-                            $url = $item['image_url']['url'];
-                            $colonIndex = strpos($url, ':');
-                            $semicolonIndex = strpos($url, ';');
-                            $comma = strpos($url, ',');
-                            
-                            $mimeType = substr($url, $colonIndex + 1, $semicolonIndex - $colonIndex - 1);
-                            $encodeType = substr($url, $semicolonIndex + 1, $comma - $semicolonIndex - 1);
-                            $data = substr($url, $comma + 1);
-                            
-                            // Handle different model types
-                            if (strpos($model_id, 'anthropic.claude-3') === 0) {
-                                // Claude 3 image format
-                                return [
-                                    'type' => 'image',
-                                    'source' => [
-                                        'type' => 'base64',
-                                        'media_type' => $mimeType,
-                                        'data' => $data
-                                    ]
-                                ];
-                            } else {
-                                // Default format for other models
-                                return [
-                                    'type' => 'image',
-                                    'source' => [
-                                        'type' => $encodeType,
-                                        'media_type' => $mimeType,
-                                        'data' => $data
-                                    ]
-                                ];
-                            }
-                        }
-                        return $item;
-                    }, $content)
-                ];
-            }, $flattened_messages);
-            
-            // Add initial user message if first message is assistant
-            if ($formatted_messages[0]['role'] === 'assistant') {
-                array_unshift($formatted_messages, [
-                    'role' => 'user',
-                    'content' => [['type' => 'text', 'text' => ';']]
-                ]);
+                    }
+                    $message['content'] = implode("\n", array_filter($text_parts));
+                }
+                
+                $processed_messages[] = $message;
             }
-
+            
             $request_body = [
-                'anthropic_version' => 'bedrock-2023-05-31',
-                'messages' => $formatted_messages,
+                'anthropic_version' => 'bedrock-2024-02-20',
                 'max_tokens' => $config['max_tokens'] ?? 2000,
                 'temperature' => $config['temperature'] ?? 0.7,
                 'top_p' => $config['top_p'] ?? 0.9,
-                'top_k' => $config['top_k'] ?? 5
+                'top_k' => $config['top_k'] ?? 5,
+                'messages' => $processed_messages
             ];
-
+            
+            // Add tools if available
             if (!empty($tools)) {
                 $request_body['tools'] = array_map(function($tool) {
                     return [
@@ -316,41 +223,36 @@ class WP_Bedrock_AWS {
         }
         // Llama 3 models (including all versions and regional variants)
         else if (strpos($model_id, 'meta.llama3') === 0 || strpos($model_id, 'us.meta.llama3') === 0) {
+            // Format LLaMA prompt with proper tokens and role handling
             $prompt = '<|begin_of_text|>';
             
-            // Extract system message if present
-            $system_message = null;
-            foreach ($messages as $message) {
-                if ($message['role'] === 'system') {
-                    $system_message = $message;
-                    break;
+            // Add system message if present
+            $system_message = array_filter($messages, function($m) { return $m['role'] === 'system'; })[0] ?? null;
+            if ($system_message) {
+                $system_content = is_array($system_message['content']) 
+                    ? implode("\n", array_map(function($c) { 
+                        return isset($c['text']) ? $c['text'] : ''; 
+                    }, $system_message['content'])) 
+                    : $system_message['content'];
+                $prompt .= "<|start_header_id|>system<|end_header_id|>\n{$system_content}<|eot_id|>";
+            }
+
+            // Add conversation messages
+            $conversation_messages = array_filter($messages, function($m) { return $m['role'] !== 'system'; });
+            foreach ($conversation_messages as $message) {
+                $role = $message['role'] === 'assistant' ? 'assistant' : 'user';
+                $content = is_array($message['content']) 
+                    ? implode("\n", array_map(function($c) { 
+                        return isset($c['text']) ? $c['text'] : ''; 
+                    }, $message['content'])) 
+                    : $message['content'];
+                    
+                if (!empty(trim($content))) {
+                    $prompt .= "<|start_header_id|>{$role}<|end_header_id|>\n{$content}<|eot_id|>";
                 }
             }
 
-            if ($system_message) {
-                $content = is_array($system_message['content']) ? 
-                    implode("\n", array_map(function($c) { 
-                        return isset($c['text']) ? $c['text'] : ''; 
-                    }, $system_message['content'])) : 
-                    $system_message['content'];
-                $prompt .= "<|start_header_id|>system<|end_header_id|>\n{$content}<|eot_id|>";
-            }
-
-            // Format conversation messages
-            $conversation_messages = array_filter($messages, function($m) {
-                return $m['role'] !== 'system';
-            });
-
-            foreach ($conversation_messages as $message) {
-                $role = $message['role'] === 'assistant' ? 'assistant' : 'user';
-                $content = is_array($message['content']) ? 
-                    implode("\n", array_map(function($c) { 
-                        return isset($c['text']) ? $c['text'] : ''; 
-                    }, $message['content'])) : 
-                    $message['content'];
-                $prompt .= "<|start_header_id|>{$role}<|end_header_id|>\n{$content}<|eot_id|>";
-            }
-
+            // Add final assistant header for completion
             $prompt .= '<|start_header_id|>assistant<|end_header_id|>';
 
             $request_body = [
@@ -368,17 +270,30 @@ class WP_Bedrock_AWS {
                 'assistant' => 'assistant'
             ];
 
+            // Format Mistral request with proper role mapping and content handling
             $request_body = [
                 'messages' => array_map(function($message) use ($mistral_mapper) {
+                    $content = '';
+                    
+                    if (is_string($message['content'])) {
+                        $content = $message['content'];
+                    } else if (is_array($message['content'])) {
+                        $content = implode("\n", array_map(function($c) {
+                            if (is_string($c)) return $c;
+                            if (isset($c['text'])) return $c['text'];
+                            return '';
+                        }, array_filter($message['content'], function($c) {
+                            return !isset($c['image_url']); // Mistral doesn't support images
+                        })));
+                    }
+                    
                     return [
                         'role' => $mistral_mapper[$message['role']] ?? 'user',
-                        'content' => is_array($message['content']) ? 
-                            implode("\n", array_map(function($c) { 
-                                return isset($c['text']) ? $c['text'] : ''; 
-                            }, $message['content'])) : 
-                            $message['content']
+                        'content' => trim($content)
                     ];
-                }, $messages),
+                }, array_filter($messages, function($message) {
+                    return !empty($message['content']);
+                })),
                 'max_tokens' => $config['max_tokens'] ?? 4096,
                 'temperature' => $config['temperature'] ?? 0.7,
                 'top_p' => $config['top_p'] ?? 0.9
@@ -415,7 +330,7 @@ class WP_Bedrock_AWS {
      * @return string|null Model response (null if streaming)
      */
     public function invoke_model($messages_or_text, $model_id = null, $temperature = null, $max_tokens = null, $stream = false, $callback = null, $tools = []) {
-        // Convert parameters to standardized format
+            // Convert parameters to standardized format
         if (is_string($messages_or_text)) {
             // Legacy format: convert single message to messages array
             $messages = [
@@ -427,7 +342,7 @@ class WP_Bedrock_AWS {
             
             // Convert individual parameters to config object
             $config = [
-                'model_id' => $model_id ?: 'anthropic.claude-3-haiku-20240307-v1',
+                'model_id' => $model_id ?: 'us.anthropic.claude-3-haiku-20240307-v1',
                 'temperature' => $temperature ?: 0.7,
                 'max_tokens' => $max_tokens ?: 2000,
                 'top_p' => 0.9,
@@ -435,12 +350,30 @@ class WP_Bedrock_AWS {
             ];
         } else if (is_array($messages_or_text) && isset($messages_or_text[0]['role'])) {
             // New format: messages array already provided
-            $messages = $messages_or_text;
+            $messages = array_map(function($message) {
+                // Convert system messages to user messages
+                if ($message['role'] === 'system') {
+                    $message['role'] = 'user';
+                }
+                
+                // Ensure content is properly formatted
+                if (is_array($message['content'])) {
+                    $text_parts = [];
+                    foreach ($message['content'] as $item) {
+                        if (isset($item['text']) || is_string($item)) {
+                            $text_parts[] = is_string($item) ? $item : $item['text'];
+                        }
+                    }
+                    $message['content'] = implode("\n", array_filter($text_parts));
+                }
+                
+                return $message;
+            }, $messages_or_text);
             
             if (is_array($model_id)) {
                 // Config object provided
                 $config = array_merge([
-                    'model_id' => 'anthropic.claude-3-haiku-20240307-v1',
+                    'model_id' => 'us.anthropic.claude-3-haiku-20240307-v1',
                     'temperature' => 0.7,
                     'max_tokens' => 2000,
                     'top_p' => 0.9,
@@ -460,72 +393,111 @@ class WP_Bedrock_AWS {
             throw new Exception('Invalid message format. Expected string or array of messages.');
         }
 
-        $request_body = $this->format_request_body($messages, $config, $tools);
+            error_log('[WP Bedrock] Formatting request body with:');
+            error_log('[WP Bedrock] Model ID: ' . $config['model_id']);
+            error_log('[WP Bedrock] Temperature: ' . $config['temperature']);
+            error_log('[WP Bedrock] Max tokens: ' . $config['max_tokens']);
+            error_log('[WP Bedrock] Messages count: ' . count($messages));
+            
+            foreach ($messages as $index => $message) {
+                error_log(sprintf('[WP Bedrock] Message %d:', $index));
+                error_log(sprintf('[WP Bedrock]   Role: %s', $message['role']));
+                error_log(sprintf('[WP Bedrock]   Content type: %s', gettype($message['content'])));
+                error_log(sprintf('[WP Bedrock]   Content: %s', json_encode($message['content'])));
+            }
 
-        try {
+            $request_body = $this->format_request_body($messages, $config, $tools);
+            error_log('[WP Bedrock] Formatted request body: ' . json_encode($request_body));
+
+            try {
             $params = [
                 'body' => json_encode($request_body),
                 'contentType' => 'application/json',
                 'modelId' => $config['model_id']
             ];
             
-            error_log('AWS Bedrock request params: ' . json_encode($params));
+            error_log('[WP Bedrock] AWS Bedrock request params: ' . json_encode($params));
 
             if ($stream) {
                 $response = $this->execute_with_retry(function() use ($params) {
                     return $this->client->invokeModelWithResponseStream($params);
                 });
+                if (!isset($response['body'])) {
+                    throw new Exception('Invalid streaming response: missing body');
+                }
+                
                 $eventStream = $response['body'];
+                error_log('[WP Bedrock] Stream started');
+                error_log('[WP Bedrock] Response type: ' . gettype($response['body']));
+                error_log('[WP Bedrock] Model ID: ' . $config['model_id']);
+                error_log('[WP Bedrock] Streaming mode: ' . ($callback ? 'with callback' : 'accumulate only'));
+                
+                if (!is_object($eventStream) || !method_exists($eventStream, 'current')) {
+                    throw new Exception('Invalid event stream: expected iterator');
+                }
                 
                 $fullResponse = '';
                 foreach ($eventStream as $event) {
-                    error_log('Stream event received: ' . json_encode($event));
-                    
-                    if (isset($event['chunk']['bytes'])) {
-                        $chunk = json_decode($event['chunk']['bytes'], true);
-                        error_log('Decoded chunk: ' . json_encode($chunk));
-                        
-                        // Handle Nova model streaming response
-                        if (strpos($config['model_id'], 'us.amazon.nova') === 0) {
-                            if (isset($chunk['contentBlockDelta']) && isset($chunk['contentBlockDelta']['delta']['text'])) {
-                                $text = $chunk['contentBlockDelta']['delta']['text'];
-                                error_log('Nova text received: ' . $text);
-                                $fullResponse .= $text;
-                                if ($callback) {
-                                    call_user_func($callback, ['text' => $text]);
-                                }
+                    try {
+                        if (isset($event['chunk']) && method_exists($event['chunk'], 'getContents')) {
+                            $chunkBytes = $event['chunk']->getContents();
+                            error_log('[WP Bedrock] Stream chunk received');
+                            
+                            $chunk = json_decode($chunkBytes, true);
+                            if ($chunk === null && json_last_error() !== JSON_ERROR_NONE) {
+                                error_log('[WP Bedrock] Failed to decode chunk: ' . json_last_error_msg());
+                                continue;
                             }
-                        } else if (isset($chunk['type'])) {
-                            // Claude 3 和其他模型的流式响应格式
-                            switch ($chunk['type']) {
-                                case 'message_start':
-                                    error_log('Message start received');
-                                    break;
-                                    
-                                case 'content_block_start':
-                                    error_log('Content block start received');
-                                    break;
-                                    
-                                case 'content_block_delta':
-                                    if (isset($chunk['delta']['text'])) {
-                                        $text = $chunk['delta']['text'];
-                                        error_log('Delta text received: ' . $text);
+                            if ($chunk !== null) {
+                                error_log('[WP Bedrock] Decoded chunk: ' . json_encode($chunk));
+                                
+                                // Handle Nova model streaming response
+                                if (strpos($config['model_id'], 'us.amazon.nova') === 0) {
+                                    if (isset($chunk['contentBlockDelta']) && isset($chunk['contentBlockDelta']['delta']['text'])) {
+                                        $text = $chunk['contentBlockDelta']['delta']['text'];
+                                        error_log('Nova text received: ' . $text);
                                         $fullResponse .= $text;
                                         if ($callback) {
                                             call_user_func($callback, ['text' => $text]);
                                         }
                                     }
-                                    break;
-                                    
-                                case 'content_block_stop':
-                                    error_log('Content block stop received');
-                                    break;
-                                    
-                                case 'message_stop':
-                                    error_log('Message stop received');
-                                    break;
+                                } else if (isset($chunk['type'])) {
+                                    // Claude 3 and other models streaming response format
+                                    switch ($chunk['type']) {
+                                        case 'message_start':
+                                            error_log('Message start received');
+                                            break;
+                                            
+                                        case 'content_block_start':
+                                            error_log('Content block start received');
+                                            break;
+                                            
+                                        case 'content_block_delta':
+                                            if (isset($chunk['delta']['text'])) {
+                                                $text = $chunk['delta']['text'];
+                                                error_log('Delta text received: ' . $text);
+                                                $fullResponse .= $text;
+                                                if ($callback) {
+                                                    call_user_func($callback, ['text' => $text]);
+                                                }
+                                            }
+                                            break;
+                                            
+                                        case 'content_block_stop':
+                                            error_log('Content block stop received');
+                                            break;
+                                            
+                                        case 'message_stop':
+                                            error_log('Message stop received');
+                                            break;
+                                    }
+                                }
+                            } else {
+                                error_log('[WP Bedrock] Failed to decode chunk');
                             }
                         }
+                    } catch (Exception $e) {
+                        error_log('[WP Bedrock] Error processing stream event: ' . $e->getMessage());
                     }
                 }
                 return $fullResponse;
@@ -533,9 +505,35 @@ class WP_Bedrock_AWS {
                 $response = $this->execute_with_retry(function() use ($params) {
                     return $this->client->invokeModel($params);
                 });
-                $result = json_decode($response['body']->getContents(), true);
                 
-                return $this->parse_response($result, $config['model_id']);
+                try {
+                    $responseData = json_encode($response);
+                    error_log('[WP Bedrock] Raw response: ' . ($responseData ?: 'Response not JSON encodable'));
+                    
+                    $responseContent = $response['body']->getContents();
+                    error_log('[WP Bedrock] Response content: ' . $responseContent);
+                    
+                    $result = json_decode($responseContent, true);
+                    if ($result !== null) {
+                        error_log('[WP Bedrock] Decoded result: ' . json_encode($result));
+                    } else {
+                        error_log('[WP Bedrock] Failed to decode response content');
+                        throw new Exception('Failed to decode response content');
+                    }
+                    
+                    if (json_last_error() !== JSON_ERROR_NONE) {
+                        error_log('[WP Bedrock] JSON decode error: ' . json_last_error_msg());
+                        throw new Exception('Failed to decode response: ' . json_last_error_msg());
+                    }
+                    
+                    $parsedResponse = $this->parse_response($result, $config['model_id']);
+                    error_log('[WP Bedrock] Parsed response: ' . json_encode($parsedResponse));
+                    
+                    return $parsedResponse;
+                } catch (Exception $e) {
+                    error_log('[WP Bedrock] Error processing response: ' . $e->getMessage());
+                    throw $e;
+                }
             }
         } catch (Exception $e) {
             throw new Exception('Error invoking Bedrock model: ' . $e->getMessage());
@@ -770,13 +768,20 @@ class WP_Bedrock_AWS {
      * @return string|array Parsed response
      */
     private function parse_response($result, $model_id) {
+        error_log('[WP Bedrock] Parsing response for model: ' . $model_id);
+        error_log('[WP Bedrock] Response to parse: ' . json_encode($result));
+        
         // Claude models (including Claude 3 and 3.5)
-        if (strpos($model_id, 'anthropic.claude') === 0) {
+        if (strpos($model_id, 'anthropic.claude') === 0 || strpos($model_id, 'us.anthropic.claude') === 0) {
+            error_log('[WP Bedrock] Parsing Claude response');
             if (isset($result['content']) && is_array($result['content'])) {
-                return array_reduce($result['content'], function($text, $content) {
+                $response = array_reduce($result['content'], function($text, $content) {
                     return $text . ($content['text'] ?? '');
                 }, '');
+                error_log('[WP Bedrock] Parsed Claude response: ' . $response);
+                return $response;
             }
+            error_log('[WP Bedrock] Invalid Claude response format');
         }
         // Nova models (including regional variants)
         else if (strpos($model_id, 'amazon.nova') === 0 || strpos($model_id, 'us.amazon.nova') === 0) {
