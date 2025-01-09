@@ -202,7 +202,7 @@ class WP_Bedrock_AWS {
             }
             
             $request_body = [
-                'anthropic_version' => 'bedrock-2024-02-20',
+                'anthropic_version' => 'bedrock-2023-05-31',
                 'max_tokens' => $config['max_tokens'] ?? 2000,
                 'temperature' => $config['temperature'] ?? 0.7,
                 'top_p' => $config['top_p'] ?? 0.9,
@@ -439,8 +439,19 @@ class WP_Bedrock_AWS {
                 $fullResponse = '';
                 foreach ($eventStream as $event) {
                     try {
-                        if (isset($event['chunk']) && method_exists($event['chunk'], 'getContents')) {
-                            $chunkBytes = $event['chunk']->getContents();
+                        if (isset($event['chunk'])) {
+                            error_log('[WP Bedrock] Processing chunk of type: ' . gettype($event['chunk']));
+                            
+                            try {
+                                $chunkBytes = is_object($event['chunk']) && method_exists($event['chunk'], 'getContents') 
+                                    ? $event['chunk']->getContents()
+                                    : (is_array($event['chunk']) ? json_encode($event['chunk']) : strval($event['chunk']));
+                                    
+                                error_log('[WP Bedrock] Successfully processed chunk bytes');
+                            } catch (Exception $e) {
+                                error_log('[WP Bedrock] Error processing chunk: ' . $e->getMessage());
+                                continue;
+                            }
                             error_log('[WP Bedrock] Stream chunk received');
                             
                             $chunk = json_decode($chunkBytes, true);

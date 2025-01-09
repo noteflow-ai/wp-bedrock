@@ -632,15 +632,13 @@ class WP_Bedrock_Admin {
 
         if (isset($data['text'])) {
             $data = [
-                'chunk' => [
-                    'bytes' => json_encode([
-                        'type' => 'content_block_delta',
-                        'delta' => [
-                            'type' => 'text_delta',
-                            'text' => $data['text']
-                        ]
-                    ])
-                ]
+                'bytes' => base64_encode(json_encode([
+                    'type' => 'content_block_delta',
+                    'delta' => [
+                        'type' => 'text_delta',
+                        'text' => $data['text']
+                    ]
+                ]))
             ];
         }
 
@@ -758,7 +756,7 @@ class WP_Bedrock_Admin {
             // Format tools based on model type
             if (strpos($model_id, 'anthropic.claude') !== false) {
                 // Claude format
-                $requestBody['anthropic_version'] = 'bedrock-2024-02-20';
+                $requestBody['anthropic_version'] = 'bedrock-2023-05-31';
                 if (!empty($tools)) {
                     $requestBody['tools'] = array_map(function($tool) {
                         return [

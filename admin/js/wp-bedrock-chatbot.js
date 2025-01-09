@@ -206,15 +206,10 @@ function initChatbot() {
         elements.messagesContainer.append(messageDiv);
         scrollToBottom();
 
-        // Only include image in history if URL is valid
-        const messageContent = imageUrl && imageUrl !== 'null' ? [
-            { type: 'text', text: content },
-            { type: 'image_url', image_url: { url: imageUrl } }
-        ] : content;
-
+        // Add message to history
         messageHistory.push({
             role: isUser ? 'user' : 'assistant',
-            content: messageContent
+            content: content
         });
 
         updateMessageCount();
@@ -236,30 +231,91 @@ function initChatbot() {
         if (!data) return;
 
         try {
-            // Handle tool calls
-            if (data.contentBlockStart?.start?.toolUse) {
-                const toolUse = data.contentBlockStart.start.toolUse;
-                toolIndex += 1;
-                runTools.push({
-                    id: toolUse.toolUseId,
-                    type: 'function',
-                    function: {
-                        name: toolUse.name || '',
-                        arguments: '{}'
+            // Handle Claude responses
+            if (wpbedrock_chat.default_model.includes('anthropic.claude')) {
+                // Parse the bytes field if present
+                if (data.bytes) {
+                    try {
+                        const decoded = JSON.parse(atob(data.bytes));
+                        data = decoded;
+                    } catch (e) {
+                        console.warn('[WP Bedrock] Failed to parse bytes:', e);
+                        return;
                     }
-                });
-                return;
+                }
+
+                if (data.type === 'message_start') {
+                    remainText = '';
+                    return;
+                }
+                if (data.type === 'content_block_start') {
+                    if (data.content_block.type === 'text') {
+                        remainText = '';
+                    }
+                    return;
+                }
+                if (data.type === 'content_block_delta') {
+                    if (data.delta.type === 'text_delta') {
+                        remainText += data.delta.text;
+                        updateStreamingMessage(remainText);
+                    }
+                    return;
+                }
+                if (data.type === 'tool_use') {
+                    toolIndex += 1;
+                    runTools.push({
+                        id: data.id,
+                        type: 'function',
+                        function: {
+                            name: data.name,
+                            arguments: JSON.stringify(data.input)
+                        }
+                    });
+                    return;
+                }
+            } else if (wpbedrock_chat.default_model.includes('mistral.mistral')) {
+                // Handle Mistral tool calls
+                if (data.tool_calls) {
+                    toolIndex += 1;
+                    runTools.push(...data.tool_calls.map(tool => ({
+                        id: tool.id,
+                        type: 'function',
+                        function: {
+                            name: tool.function.name,
+                            arguments: tool.function.arguments
+                        }
+                    })));
+                    return;
+                }
+            } else if (wpbedrock_chat.default_model.includes('amazon.nova')) {
+                // Handle Nova tool calls
+                if (data.contentBlockStart?.start?.toolUse) {
+                    const toolUse = data.contentBlockStart.start.toolUse;
+                    toolIndex += 1;
+                    runTools.push({
+                        id: toolUse.toolUseId,
+                        type: 'function',
+                        function: {
+                            name: toolUse.name || '',
+                            arguments: JSON.stringify(toolUse.input || {})
+                        }
+                    });
+                    return;
+                }
+
+                // Handle Nova tool input
+                if (data.contentBlockDelta?.delta?.toolUse?.input) {
+                    if (runTools[toolIndex]) {
+                        runTools[toolIndex].function.arguments = JSON.stringify(data.contentBlockDelta.delta.toolUse.input);
+                    }
+                    return;
+                }
             }
 
-            // Handle tool input
-            if (data.contentBlockDelta?.delta?.toolUse?.input) {
-                if (runTools[toolIndex]) {
-                    runTools[toolIndex].function.arguments = data.contentBlockDelta.delta.toolUse.input;
-                    
-                    // Execute tool when arguments are complete
-                    const toolResult = await executeTool(runTools[toolIndex]);
-                    addMessage(`Tool Result (${toolResult.name}): ${toolResult.content}`, false);
-                }
+            // Execute tool when arguments are complete
+            if (runTools[toolIndex] && runTools[toolIndex].function.arguments) {
+                const toolResult = await executeTool(runTools[toolIndex]);
+                addMessage(`Tool Result (${toolResult.name}): ${toolResult.content}`, false);
                 return;
             }
 
@@ -422,10 +478,7 @@ function initChatbot() {
         const message = elements.messageInput.val().trim();
         if (!message || isProcessing) return;
 
-        // Get image URL only if preview is visible and image source is valid
-        const imageUrl = elements.imagePreview.is(':visible') ? 
-            (elements.previewImage.attr('src') || null) : null;
-        addMessage(message, true, imageUrl);
+        addMessage(message, true);
         elements.messageInput.val('');
         elements.imagePreview.hide();
         elements.imageUpload.val('');
@@ -443,13 +496,74 @@ function initChatbot() {
                     action: 'wpbedrock_chat',
                     nonce: wpbedrock_chat.nonce,
                     message: message,
-                    image: imageUrl,
-                    history: JSON.stringify(messageHistory.slice(-wpbedrock_chat.context_length)), // Only send last N messages
+                    history: JSON.stringify([
+                        // Add system prompt as first user message
+                        {
+                            role: 'user',
+                            content: wpbedrock_chat.default_system_prompt || ''
+                        },
+                        // Add assistant response
+                        {
+                            role: 'assistant',
+                            content: ';'
+                        },
+                        // Then add conversation history
+                        ...messageHistory.slice(-wpbedrock_chat.context_length).filter(msg => msg.role === 'user')
+                    ]), // Send system prompt + user messages
                     stream: wpbedrock_chat.enable_stream ? '1' : '0',
                     model: wpbedrock_chat.default_model,
                     temperature: wpbedrock_chat.default_temperature,
                     system_prompt: wpbedrock_chat.default_system_prompt,
-                    tools: JSON.stringify(selectedTools)
+                    anthropic_version: wpbedrock_chat.default_model.includes('anthropic.claude') ? 'bedrock-2023-05-31' : undefined,
+                    max_tokens: 2000,
+                    temperature: 1,
+                    top_p: 1,
+                    top_k: 5,
+                    tools: selectedTools.length > 0 ? JSON.stringify(selectedTools.map(tool => {
+                        if (wpbedrock_chat.default_model.includes('anthropic.claude')) {
+                            // Format for Claude models
+                            return {
+                                name: tool.function.name,
+                                description: tool.function.description,
+                                input_schema: tool.function.parameters || {}
+                            };
+                        } else if (wpbedrock_chat.default_model.includes('mistral.mistral')) {
+                            // Format for Mistral models
+                            return {
+                                type: 'function',
+                                function: {
+                                    name: tool.function.name,
+                                    description: tool.function.description,
+                                    parameters: tool.function.parameters
+                                }
+                            };
+                        } else if (wpbedrock_chat.default_model.includes('amazon.nova')) {
+                            // Format for Nova models
+                            return {
+                                toolSpec: {
+                                    name: tool.function.name,
+                                    description: tool.function.description,
+                                    inputSchema: {
+                                        json: {
+                                            type: "object",
+                                            properties: tool.function.parameters.properties || {},
+                                            required: tool.function.parameters.required || []
+                                        }
+                                    }
+                                }
+                            };
+                        }
+                        // Default format for other models
+                        return {
+                            name: tool.function.name,
+                            description: tool.function.description,
+                            input_schema: {
+                                type: "object",
+                                properties: tool.function.parameters.properties || {},
+                                required: tool.function.parameters.required || []
+                            }
+                        };
+                    })) : ''
                 })
             });
 
