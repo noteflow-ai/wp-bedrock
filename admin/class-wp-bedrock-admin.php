@@ -44,8 +44,8 @@ class WP_Bedrock_Admin {
 
         add_action('admin_menu', array($this, 'add_plugin_admin_menu'));
         add_action('admin_init', array($this, 'register_settings'));
-        add_action('wp_ajax_wpbedrock_chat', array($this, 'handle_chat_message'));
-        add_action('wp_ajax_nopriv_wpbedrock_chat', array($this, 'handle_chat_message'));
+        add_action('wp_ajax_wpbedrock_chat_message', array($this, 'handle_chat_message'));
+        add_action('wp_ajax_nopriv_wpbedrock_chat_message', array($this, 'handle_chat_message'));
         add_action('wp_ajax_wpbedrock_generate_image', array($this, 'handle_image_generation'));
         add_action('wp_ajax_nopriv_wpbedrock_generate_image', array($this, 'handle_image_generation'));
         add_action('wp_ajax_wpbedrock_upscale_image', array($this, 'handle_image_upscale'));
@@ -819,20 +819,20 @@ class WP_Bedrock_Admin {
             $bedrock = new \WPBEDROCK\WP_Bedrock_AWS($aws_key, $aws_secret, $aws_region);
 
             if ($is_stream) {
-                remove_action('shutdown', 'wp_ob_end_flush_all', 1);
-                while (ob_get_level() > 0) {
-                    ob_end_clean();
-                }
-                wp_ob_end_flush_all();
+                // Disable output buffering and compression
+                @ini_set('output_buffering', 'off');
+                @ini_set('zlib.output_compression', false);
+                @ini_set('implicit_flush', true);
+                while (@ob_end_clean());
                 
-                header('Content-Type: text/event-stream; charset=utf-8');
-                header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-                header('Cache-Control: post-check=0, pre-check=0', false);
-                header('Pragma: no-cache');
-                header('Content-Encoding: none');
+                // Set headers for SSE
+                header('Content-Type: text/event-stream');
+                header('Cache-Control: no-cache');
                 header('Connection: keep-alive');
                 header('X-Accel-Buffering: no');
-                header('Access-Control-Allow-Origin: *');
+                
+                // Send initial response to establish connection
+                echo "retry: 1000\n\n";
                 flush();
                 
             $bedrock->invoke_model(

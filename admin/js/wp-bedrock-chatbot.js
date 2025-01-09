@@ -1,4 +1,3 @@
-// Wait for DOM and required libraries to be loaded
 function initChatbot() {
     // Check for all required dependencies
     const requiredDeps = {
@@ -41,343 +40,496 @@ function initChatbot() {
     // Reset attempts counter on successful load
     window.wpBedrockInitAttempts = 0;
 
-    console.log('[WP Bedrock] All dependencies loaded, initializing chatbot...');
-    const $ = jQuery;
+console.log('[WP Bedrock] All dependencies loaded, initializing chatbot...');
+const $ = jQuery;
 
-    // Chat state
-    let isProcessing = false;
-    let currentStreamingMessage = null;
-    let messageHistory = [];
-    let currentEventSource = null;
-    let isFullscreen = false;
-    let chunks = [];
-    let pendingChunk = null;
-    let remainText = '';
-    let runTools = [];
-    let toolIndex = -1;
-    let selectedTools = []; // Moved to outer scope
+// Chat state
+let isProcessing = false;
+let currentStreamingMessage = null;
+let messageHistory = [];
+let currentEventSource = null;
+let isFullscreen = false;
+let chunks = [];
+let pendingChunk = null;
+let remainText = '';
+let runTools = [];
+let toolIndex = -1;
+let selectedTools = []; // Moved to outer scope
 
-    // DOM Elements
-    const elements = {
-        chatContainer: $('.chat-container'),
-        messagesContainer: $('#wpaicg-chat-messages'),
-        messageInput: $('#wpaicg-chat-message'),
-        sendButton: $('#wpaicg-send-message'),
-        stopButton: $('#wpaicg-stop-message'),
-        imageUpload: $('#wpaicg-image-upload'),
-        imageTrigger: $('#wpaicg-image-trigger'),
-        imagePreview: $('#wpaicg-image-preview'),
-        previewImage: $('#wpaicg-preview-image'),
-        removeImageButton: $('#wpaicg-remove-image'),
-        clearChatButton: $('#clear-chat'),
-        refreshChatButton: $('#refresh-chat'),
-        exportChatButton: $('#export-chat'),
-        shareChatButton: $('#share-chat'),
-        fullscreenButton: $('#fullscreen-chat'),
-        settingsTrigger: $('#wpaicg-settings-trigger'),
-        promptTrigger: $('#wpaicg-prompt-trigger'),
-        maskTrigger: $('#wpaicg-mask-trigger'),
-        voiceTrigger: $('#wpaicg-voice-trigger'),
-        gridTrigger: $('#wpaicg-grid-trigger'),
-        layoutTrigger: $('#wpaicg-layout-trigger'),
-        messageCountDisplay: $('.message-count')
-    };
+// DOM Elements
+const elements = {
+    chatContainer: $('.chat-container'),
+    messagesContainer: $('#wpaicg-chat-messages'),
+    messageInput: $('#wpaicg-chat-message'),
+    sendButton: $('#wpaicg-send-message'),
+    stopButton: $('#wpaicg-stop-message'),
+    imageUpload: $('#wpaicg-image-upload'),
+    imageTrigger: $('#wpaicg-image-trigger'),
+    imagePreview: $('#wpaicg-image-preview'),
+    previewImage: $('#wpaicg-preview-image'),
+    removeImageButton: $('#wpaicg-remove-image'),
+    clearChatButton: $('#clear-chat'),
+    refreshChatButton: $('#refresh-chat'),
+    exportChatButton: $('#export-chat'),
+    shareChatButton: $('#share-chat'),
+    fullscreenButton: $('#fullscreen-chat'),
+    settingsTrigger: $('#wpaicg-settings-trigger'),
+    promptTrigger: $('#wpaicg-prompt-trigger'),
+    maskTrigger: $('#wpaicg-mask-trigger'),
+    voiceTrigger: $('#wpaicg-voice-trigger'),
+    gridTrigger: $('#wpaicg-grid-trigger'),
+    layoutTrigger: $('#wpaicg-layout-trigger'),
+    messageCountDisplay: $('.message-count')
+};
 
-    // Tool handling
-    async function executeTool(toolCall) {
-        try {
-            const response = await fetch(wpbedrock_chat.ajaxurl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                },
-                body: new URLSearchParams({
-                    action: 'wpbedrock_tool',
-                    nonce: wpbedrock_chat.nonce,
-                    tool: toolCall.function.name,
-                    parameters: toolCall.function.arguments
-                })
+// Tool handling
+async function executeTool(toolCall) {
+    try {
+        const response = await fetch(wpbedrock_chat.ajaxurl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({
+                action: 'wpbedrock_tool',
+                nonce: wpbedrock_chat.nonce,
+                tool: toolCall.function.name,
+                parameters: toolCall.function.arguments
+            })
+        });
+
+        if (!response.ok) throw new Error('Network response was not ok');
+        const result = await response.json();
+
+        if (!result.success) {
+            throw new Error(result.data);
+        }
+
+        return {
+            tool_call_id: toolCall.id,
+            role: 'tool',
+            name: toolCall.function.name,
+            content: JSON.stringify(result.data)
+        };
+    } catch (error) {
+        console.error('[WP Bedrock] Tool execution failed:', error);
+        return {
+            tool_call_id: toolCall.id,
+            role: 'tool',
+            name: toolCall.function.name,
+            content: `Error: ${error.message}`
+        };
+    }
+}
+
+// Message handling
+function updateMessageCount() {
+    const count = messageHistory.length;
+    elements.messageCountDisplay.text(`${count} message${count !== 1 ? 's' : ''}`);
+}
+
+// Message creation helpers
+function createMessageElement(content, isUser = false, imageUrl = null) {
+    const messageDiv = $('<div>')
+        .addClass('chat-message')
+        .addClass(isUser ? 'user' : 'ai');
+
+    const containerDiv = $('<div>')
+        .addClass('chat-message-container');
+
+    const headerDiv = $('<div>')
+        .addClass('chat-message-header');
+
+    if (!isUser) {
+        // Create and append AI avatar with error handling
+        const avatarImg = $('<img>')
+            .attr({
+                src: wpbedrock_chat.ai_avatar || `${wpbedrock_chat.plugin_url}images/ai-avatar.svg`,
+                alt: 'AI',
+                width: 35,
+                height: 35
+            })
+            .css('border-radius', '50%')
+            .on('error', function() {
+                // If image fails to load, replace with a fallback
+                $(this).replaceWith(
+                    $('<div>')
+                        .css({
+                            width: '35px',
+                            height: '35px',
+                            borderRadius: '50%',
+                            backgroundColor: '#2271b1',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: '#fff',
+                            fontSize: '16px'
+                        })
+                        .text('AI')
+                );
             });
-
-            if (!response.ok) throw new Error('Network response was not ok');
-            const result = await response.json();
-
-            if (!result.success) {
-                throw new Error(result.data);
-            }
-
-            return {
-                tool_call_id: toolCall.id,
-                role: 'tool',
-                name: toolCall.function.name,
-                content: JSON.stringify(result.data)
-            };
-        } catch (error) {
-            console.error('[WP Bedrock] Tool execution failed:', error);
-            return {
-                tool_call_id: toolCall.id,
-                role: 'tool',
-                name: toolCall.function.name,
-                content: `Error: ${error.message}`
-            };
-        }
+        
+        headerDiv.append(avatarImg);
     }
 
-    // Message handling
-    function updateMessageCount() {
-        const count = messageHistory.length;
-        elements.messageCountDisplay.text(`${count} message${count !== 1 ? 's' : ''}`);
+    const contentDiv = $('<div>')
+        .addClass('message-content');
+
+    if (imageUrl) {
+        contentDiv.append($('<img>').attr('src', imageUrl).addClass('message-image'));
     }
 
-    function createMessageElement(content, isUser = false, imageUrl = null) {
-        const messageDiv = $('<div>')
-            .addClass('chat-message')
-            .addClass(isUser ? 'user' : 'ai');
+    containerDiv.append(headerDiv, contentDiv);
+    messageDiv.append(containerDiv);
 
-        const containerDiv = $('<div>')
-            .addClass('chat-message-container');
+    // Set initial content
+    updateMessageContent(contentDiv, content, !isUser);
 
-        const headerDiv = $('<div>')
-            .addClass('chat-message-header');
+    return messageDiv;
+}
 
-        if (!isUser) {
-            // Create and append AI avatar with error handling
-            const avatarImg = $('<img>')
-                .attr({
-                    src: wpbedrock_chat.ai_avatar || `${wpbedrock_chat.plugin_url}images/ai-avatar.svg`,
-                    alt: 'AI',
-                    width: 35,
-                    height: 35
-                })
-                .css('border-radius', '50%')
-                .on('error', function() {
-                    // If image fails to load, replace with a fallback
-                    $(this).replaceWith(
-                        $('<div>')
-                            .css({
-                                width: '35px',
-                                height: '35px',
-                                borderRadius: '50%',
-                                backgroundColor: '#2271b1',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                color: '#fff',
-                                fontSize: '16px'
-                            })
-                            .text('AI')
-                    );
-                });
-            
-            headerDiv.append(avatarImg);
-        }
-
-        const contentDiv = $('<div>')
-            .addClass('message-content');
-
-        if (imageUrl) {
-            contentDiv.append($('<img>').attr('src', imageUrl).addClass('message-image'));
-        }
-
-        if (!isUser && typeof content === 'string') {
-            // Process markdown and add the HTML content
+function updateMessageContent(contentDiv, content, processAsMarkdown = false) {
+    if (processAsMarkdown && typeof content === 'string') {
+        if (content.includes('```') || content.includes('**') || content.includes('__')) {
+            // Only process markdown if the content contains markdown syntax
             contentDiv.html(processMarkdown(content));
             // Initialize syntax highlighting for code blocks
             contentDiv.find('pre code').each(function(i, block) {
                 window.hljs.highlightElement(block);
             });
         } else {
+            // For plain text (like Chinese), just set it directly
             contentDiv.text(content);
         }
-
-        containerDiv.append(headerDiv, contentDiv);
-        messageDiv.append(containerDiv);
-
-        return messageDiv;
+    } else {
+        contentDiv.text(content);
     }
+}
 
-    function addMessage(content, isUser = false, imageUrl = null) {
-        const messageDiv = createMessageElement(content, isUser, imageUrl);
-        
-        if (!isUser) {
-            currentStreamingMessage = messageDiv.find('.message-content');
+function addMessage(content, isUser = false, imageUrl = null) {
+    const messageDiv = createMessageElement(content, isUser, imageUrl);
+    
+    if (!isUser) {
+        currentStreamingMessage = messageDiv.find('.message-content');
+        if (content && typeof content === 'string') {
+            updateMessageContent(currentStreamingMessage, content, true);
         }
-        
-        elements.messagesContainer.append(messageDiv);
-        scrollToBottom();
-
-        // Add message to history
-        messageHistory.push({
-            role: isUser ? 'user' : 'assistant',
-            content: content
-        });
-
-        updateMessageCount();
-        return messageDiv;
     }
+    
+    elements.messagesContainer.append(messageDiv);
+    scrollToBottom();
 
-    function updateStreamingMessage(text) {
-        if (!currentStreamingMessage) return;
-        currentStreamingMessage.html(processMarkdown(text));
-        scrollToBottom();
-    }
+    // Add message to history
+    messageHistory.push({
+        role: isUser ? 'user' : 'assistant',
+        content: content
+    });
 
-    function scrollToBottom() {
-        elements.messagesContainer.scrollTop(elements.messagesContainer[0].scrollHeight);
-    }
+    updateMessageCount();
+    return messageDiv;
+}
 
-    // Stream Processing
-    async function processMessage(data) {
-        if (!data) return;
+function scrollToBottom() {
+    elements.messagesContainer.scrollTop(elements.messagesContainer[0].scrollHeight);
+}
 
-        try {
-            // Handle Claude responses
-            if (wpbedrock_chat.default_model.includes('anthropic.claude')) {
-                // Parse the bytes field if present
-                if (data.bytes) {
-                    try {
-                        const decoded = JSON.parse(atob(data.bytes));
-                        data = decoded;
-                    } catch (e) {
-                        console.warn('[WP Bedrock] Failed to parse bytes:', e);
-                        return;
-                    }
+// Stream Processing
+async function processMessage(data) {
+    if (!data) return;
+
+    try {
+        // Handle Claude responses
+        if (wpbedrock_chat.default_model.includes('anthropic.claude')) {
+            // Parse the bytes field if present
+            if (data.bytes) {
+                try {
+                    const decoded = JSON.parse(atob(data.bytes));
+                    data = decoded;
+                } catch (e) {
+                    console.warn('[WP Bedrock] Failed to parse bytes:', e);
+                    return;
                 }
+            }
 
-                if (data.type === 'message_start') {
+            if (data.type === 'message_start') {
+                remainText = '';
+                return;
+            }
+            if (data.type === 'content_block_start') {
+                if (data.content_block.type === 'text') {
                     remainText = '';
-                    return;
                 }
-                if (data.type === 'content_block_start') {
-                    if (data.content_block.type === 'text') {
-                        remainText = '';
-                    }
-                    return;
-                }
-                if (data.type === 'content_block_delta') {
-                    if (data.delta.type === 'text_delta') {
-                        remainText += data.delta.text;
-                        updateStreamingMessage(remainText);
-                    }
-                    return;
-                }
-                if (data.type === 'tool_use') {
-                    toolIndex += 1;
-                    runTools.push({
-                        id: data.id,
-                        type: 'function',
-                        function: {
-                            name: data.name,
-                            arguments: JSON.stringify(data.input)
-                        }
-                    });
-                    return;
-                }
-            } else if (wpbedrock_chat.default_model.includes('mistral.mistral')) {
-                // Handle Mistral tool calls
-                if (data.tool_calls) {
-                    toolIndex += 1;
-                    runTools.push(...data.tool_calls.map(tool => ({
-                        id: tool.id,
-                        type: 'function',
-                        function: {
-                            name: tool.function.name,
-                            arguments: tool.function.arguments
-                        }
-                    })));
-                    return;
-                }
-            } else if (wpbedrock_chat.default_model.includes('amazon.nova')) {
-                // Handle Nova tool calls
-                if (data.contentBlockStart?.start?.toolUse) {
-                    const toolUse = data.contentBlockStart.start.toolUse;
-                    toolIndex += 1;
-                    runTools.push({
-                        id: toolUse.toolUseId,
-                        type: 'function',
-                        function: {
-                            name: toolUse.name || '',
-                            arguments: JSON.stringify(toolUse.input || {})
-                        }
-                    });
-                    return;
-                }
-
-                // Handle Nova tool input
-                if (data.contentBlockDelta?.delta?.toolUse?.input) {
-                    if (runTools[toolIndex]) {
-                        runTools[toolIndex].function.arguments = JSON.stringify(data.contentBlockDelta.delta.toolUse.input);
-                    }
-                    return;
-                }
+                return;
             }
-
-            // Execute tool when arguments are complete
-            if (runTools[toolIndex] && runTools[toolIndex].function.arguments) {
-                const toolResult = await executeTool(runTools[toolIndex]);
-                addMessage(`Tool Result (${toolResult.name}): ${toolResult.content}`, false);
+            if (data.type === 'content_block_delta') {
+                if (data.delta.type === 'text_delta') {
+                    remainText += data.delta.text;
+                    if (currentStreamingMessage) {
+                        updateMessageContent(currentStreamingMessage, remainText, true);
+                        scrollToBottom();
+                    }
+                }
+                return;
+            }
+            if (data.type === 'tool_use') {
+                toolIndex += 1;
+                runTools.push({
+                    id: data.id,
+                    type: 'function',
+                    function: {
+                        name: data.name,
+                        arguments: JSON.stringify(data.input)
+                    }
+                });
+                return;
+            }
+        } else if (wpbedrock_chat.default_model.includes('mistral.mistral')) {
+            // Handle Mistral tool calls
+            if (data.tool_calls) {
+                toolIndex += 1;
+                runTools.push(...data.tool_calls.map(tool => ({
+                    id: tool.id,
+                    type: 'function',
+                    function: {
+                        name: tool.function.name,
+                        arguments: tool.function.arguments
+                    }
+                })));
+                return;
+            }
+        } else if (wpbedrock_chat.default_model.includes('amazon.nova')) {
+            // Handle Nova tool calls
+            if (data.contentBlockStart?.start?.toolUse) {
+                const toolUse = data.contentBlockStart.start.toolUse;
+                toolIndex += 1;
+                runTools.push({
+                    id: toolUse.toolUseId,
+                    type: 'function',
+                    function: {
+                        name: toolUse.name || '',
+                        arguments: JSON.stringify(toolUse.input || {})
+                    }
+                });
                 return;
             }
 
-            // Handle text content
-            if (data.output?.message?.content?.[0]?.text) {
-                remainText += data.output.message.content[0].text;
-                updateStreamingMessage(remainText);
+            // Handle Nova tool input
+            if (data.contentBlockDelta?.delta?.toolUse?.input) {
+                if (runTools[toolIndex]) {
+                    runTools[toolIndex].function.arguments = JSON.stringify(data.contentBlockDelta.delta.toolUse.input);
+                }
                 return;
             }
-
-            // Handle text delta
-            if (data.contentBlockDelta?.delta?.text) {
-                remainText += data.contentBlockDelta.delta.text;
-                updateStreamingMessage(remainText);
-                return;
-            }
-
-            // Handle various response formats
-            let newText = '';
-            if (data.delta?.text) {
-                newText = data.delta.text;
-            } else if (data.choices?.[0]?.message?.content) {
-                newText = data.choices[0].message.content;
-            } else if (data.content?.[0]?.text) {
-                newText = data.content[0].text;
-            } else if (data.generation) {
-                newText = data.generation;
-            } else if (data.outputText) {
-                newText = data.outputText;
-            } else if (data.response) {
-                newText = data.response;
-            } else if (data.output) {
-                newText = data.output;
-            }
-
-            if (newText) {
-                remainText += newText;
-                updateStreamingMessage(remainText);
-            }
-        } catch (e) {
-            console.warn('[WP Bedrock] Failed to process message:', e);
         }
-    }
 
-    function processChunk(chunk) {
+        // Execute tool when arguments are complete
+        if (runTools[toolIndex] && runTools[toolIndex].function.arguments) {
+            const toolResult = await executeTool(runTools[toolIndex]);
+            addMessage(`Tool Result (${toolResult.name}): ${toolResult.content}`, false);
+            return;
+        }
+
+        // Handle text content
+        if (data.output?.message?.content?.[0]?.text) {
+            remainText += data.output.message.content[0].text;
+                if (currentStreamingMessage) {
+                    updateMessageContent(currentStreamingMessage, remainText, true);
+                    scrollToBottom();
+                }
+            return;
+        }
+
+        // Handle text delta
+        if (data.contentBlockDelta?.delta?.text) {
+            remainText += data.contentBlockDelta.delta.text;
+                if (currentStreamingMessage) {
+                    updateMessageContent(currentStreamingMessage, remainText, true);
+                    scrollToBottom();
+                }
+            return;
+        }
+
+        // Handle various response formats
+        let newText = '';
+        if (data.delta?.text) {
+            newText = data.delta.text;
+        } else if (data.choices?.[0]?.message?.content) {
+            newText = data.choices[0].message.content;
+        } else if (data.content?.[0]?.text) {
+            newText = data.content[0].text;
+        } else if (data.generation) {
+            newText = data.generation;
+        } else if (data.outputText) {
+            newText = data.outputText;
+        } else if (data.response) {
+            newText = data.response;
+        } else if (data.output) {
+            newText = data.output;
+        }
+
+        if (newText) {
+            remainText += newText;
+                if (currentStreamingMessage) {
+                    updateMessageContent(currentStreamingMessage, remainText, true);
+                    scrollToBottom();
+                }
+        }
+    } catch (e) {
+        console.warn('[WP Bedrock] Failed to process message:', e);
+    }
+}
+
+    async function processChunk(chunk) {
         try {
             const decoder = new TextDecoder('utf-8');
             const text = decoder.decode(chunk);
-            const data = JSON.parse(text);
-
-            if (data.bytes) {
-                const decoded = atob(data.bytes);
-                try {
-                    const decodedJson = JSON.parse(decoded);
-                    processMessage(decodedJson);
-                } catch (e) {
-                    processMessage({ output: decoded });
+            console.log('[WP Bedrock] Received chunk:', text);
+            
+            // Parse the SSE data lines
+            const lines = text.split('\n');
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) {
+                    console.log('[WP Bedrock] Skipping non-data line:', line);
+                    continue;
                 }
-                return;
-            }
+                
+                try {
+                    // Parse the JSON data
+                    const jsonStr = line.slice(6); // Remove 'data: ' prefix
+                    console.log('[WP Bedrock] Processing JSON data:', jsonStr);
+                    const data = JSON.parse(jsonStr);
 
-            processMessage(data);
+                    // Handle Claude format (bytes field)
+                    if (data.bytes) {
+                        console.log('[WP Bedrock] Processing Claude bytes data');
+                        const innerJson = JSON.parse(data.bytes);
+                        console.log('[WP Bedrock] Parsed Claude message:', innerJson);
+                        
+                        console.log('[WP Bedrock] Processing message type:', innerJson.type);
+                        switch (innerJson.type) {
+                            case 'message_start': {
+                                console.log('[WP Bedrock] Starting new message');
+                                remainText = '';
+                                if (!currentStreamingMessage) {
+                                    addMessage('', false);
+                                }
+                                break;
+                            }
+                                
+                            case 'content_block_start': {
+                                if (innerJson.content_block?.type === 'text') {
+                                    remainText = remainText || '';
+                                }
+                                break;
+                            }
+                                
+                            case 'content_block_delta': {
+                                if (innerJson.delta?.type === 'text_delta' && innerJson.delta?.text) {
+                                    console.log('[WP Bedrock] Adding text delta:', innerJson.delta.text);
+                                    remainText += innerJson.delta.text;
+                                    if (!currentStreamingMessage) {
+                                        console.log('[WP Bedrock] Creating new message for delta');
+                                        addMessage('', false);
+                                    }
+                                    console.log('[WP Bedrock] Updating message content:', remainText);
+                                    updateMessageContent(currentStreamingMessage, remainText, true);
+                                    scrollToBottom();
+                                }
+                                break;
+                            }
+                                
+                            case 'tool_use': {
+                                toolIndex++;
+                                runTools.push({
+                                    id: innerJson.id,
+                                    type: 'function',
+                                    function: {
+                                        name: innerJson.name,
+                                        arguments: JSON.stringify(innerJson.input)
+                                    }
+                                });
+                                break;
+                            }
+                                
+                            case 'message_stop': {
+                                if (currentStreamingMessage && remainText) {
+                                    messageHistory[messageHistory.length - 1].content = remainText;
+                                }
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Handle non-Claude models
+                    
+                    // Handle message content
+                    if (data.output?.message?.content?.[0]?.text) {
+                        remainText += data.output.message.content[0].text;
+                    } else if (data.contentBlockDelta?.delta?.text) {
+                        remainText += data.contentBlockDelta.delta.text;
+                    } else if (data.delta?.text) {
+                        remainText += data.delta.text;
+                    } else if (data.choices?.[0]?.message?.content) {
+                        remainText += data.choices[0].message.content;
+                    }
+
+                    // Update UI if we have new content
+                    if (remainText && currentStreamingMessage) {
+                        updateMessageContent(currentStreamingMessage, remainText, true);
+                        scrollToBottom();
+                    }
+
+                    // Handle tool calls
+                    if (data.tool_calls) { // Mistral format
+                        toolIndex++;
+                        runTools.push(...data.tool_calls.map(tool => ({
+                            id: tool.id,
+                            type: 'function',
+                            function: {
+                                name: tool.function.name,
+                                arguments: tool.function.arguments
+                            }
+                        })));
+                    } else if (data.contentBlockStart?.start?.toolUse) { // Nova format
+                        const toolUse = data.contentBlockStart.start.toolUse;
+                        toolIndex++;
+                        runTools.push({
+                            id: toolUse.toolUseId,
+                            type: 'function',
+                            function: {
+                                name: toolUse.name || '',
+                                arguments: JSON.stringify(toolUse.input || {})
+                            }
+                        });
+                    }
+
+                    // Handle stream completion
+                    if (data.done) {
+                        console.log('[WP Bedrock] Stream completed, final message:', remainText);
+                        if (!currentStreamingMessage) {
+                            console.log('[WP Bedrock] Creating new message for completion');
+                            addMessage('', false);
+                        }
+                        if (currentStreamingMessage && remainText) {
+                            console.log('[WP Bedrock] Updating final message content');
+                            messageHistory[messageHistory.length - 1].content = remainText;
+                            updateMessageContent(currentStreamingMessage, remainText, true);
+                            scrollToBottom();
+                        }
+                        return;
+                    }
+
+                    // Execute tool if arguments are complete
+                    if (runTools[toolIndex] && runTools[toolIndex].function.arguments) {
+                        const toolResult = await executeTool(runTools[toolIndex]);
+                        addMessage(`Tool Result (${toolResult.name}): ${toolResult.content}`, false);
+                    }
+
+                } catch (e) {
+                    console.warn('[WP Bedrock] Failed to process SSE message:', e);
+                }
+            }
         } catch (e) {
             console.warn('[WP Bedrock] Failed to process chunk:', e);
         }
@@ -474,9 +626,266 @@ function initChatbot() {
     }
 
     // Chat API
+    // Add typing animation state
+    let typingQueue = [];
+    let isTyping = false;
+    let typingTimeout = null;
+
+    function updateStreamingMessage(text) {
+        if (!currentStreamingMessage) return;
+        console.log('[WP Bedrock] Received chunk to type:', text);
+
+        // Split text into characters and add to queue
+        const chars = Array.from(text);
+        typingQueue.push(...chars);
+
+        // Start typing if not already typing
+        if (!isTyping) {
+            console.log('[WP Bedrock] Starting to type immediately');
+            typeNextChar();
+        }
+    }
+
+    function typeNextChar() {
+        if (typingQueue.length === 0) {
+            isTyping = false;
+            return;
+        }
+
+        isTyping = true;
+        const char = typingQueue.shift();
+        if (currentStreamingMessage) {
+            updateMessageContent(currentStreamingMessage, currentStreamingMessage.text() + char, true);
+            scrollToBottom();
+        }
+
+        // Schedule next character
+        typingTimeout = setTimeout(typeNextChar, 30);
+    }
+
+    async function setupEventSource(url) {
+        // Close any existing EventSource
+        if (currentEventSource) {
+            currentEventSource.close();
+            currentEventSource = null;
+        }
+
+    // For non-streaming mode, use fetch instead of EventSource
+    if (!wpbedrock_chat.enable_stream) {
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const data = await response.json();
+            console.log('[WP Bedrock] Non-streaming response:', data);
+
+            // Create message container if needed
+            if (!currentStreamingMessage) {
+                addMessage('', false);
+            }
+
+            // Handle WordPress AJAX response format first
+            let responseText = '';
+            if (data.success && data.data) {
+                responseText = data.data;
+            } else if (data.response) {
+                responseText = data.response;
+            } else if (data.output?.message?.content?.[0]?.text) {
+                responseText = data.output.message.content[0].text;
+            } else if (data.content?.[0]?.text) {
+                responseText = data.content[0].text;
+            } else if (data.choices?.[0]?.message?.content) {
+                responseText = data.choices[0].message.content;
+            } else if (data.generation) {
+                responseText = data.generation;
+            } else if (data.outputText) {
+                responseText = data.outputText;
+            } else if (data.output) {
+                responseText = data.output;
+            }
+
+            if (responseText) {
+                updateMessageContent(currentStreamingMessage, responseText, true);
+                scrollToBottom();
+                messageHistory[messageHistory.length - 1].content = responseText;
+            } else {
+                throw new Error('No valid response content found');
+            }
+
+            setProcessingState(false);
+            return;
+        } catch (error) {
+            console.error('[WP Bedrock] Error in non-streaming mode:', error);
+            handleStreamError(null, error.message);
+            return;
+        }
+    }
+
+        // Streaming mode
+        let retryCount = 0;
+        const MAX_RETRIES = 3;
+        const RETRY_DELAY = 1000;
+
+        function createEventSource() {
+            const eventSource = new EventSource(url);
+            currentEventSource = eventSource;
+            console.log('[WP Bedrock] Creating new EventSource connection...');
+
+            eventSource.onopen = function() {
+                console.log('[WP Bedrock] Stream connection opened successfully');
+                retryCount = 0;
+                removeTypingIndicator();
+                
+                // Create initial empty message if none exists
+                if (!currentStreamingMessage) {
+                    addMessage('', false);
+                }
+            };
+
+            eventSource.onmessage = async function(e) {
+                try {
+                    console.log('[WP Bedrock] Stream message received:', e.data);
+                    const data = JSON.parse(e.data);
+
+                    // Handle stream completion
+                    if (data.done) {
+                        console.log('[WP Bedrock] Stream completed successfully');
+                        eventSource.close();
+                        currentEventSource = null;
+                        setProcessingState(false);
+                        return;
+                    }
+
+                    // Handle errors
+                    if (data.error) {
+                        console.error('[WP Bedrock] Stream error received:', data.error);
+                        handleStreamError(eventSource, 'Server error: ' + data.error);
+                        return;
+                    }
+
+                    // Handle Claude format
+                    if (data.bytes) {
+                        try {
+                            const decoded = JSON.parse(atob(data.bytes));
+                            
+                            // Create message container if needed
+                            if (!currentStreamingMessage) {
+                                addMessage('', false);
+                            }
+
+                            // Process Claude message types
+                            switch (decoded.type) {
+                                case 'message_start':
+                                    remainText = '';
+                                    break;
+                                    
+                                case 'content_block_start':
+                                    if (decoded.content_block?.type === 'text') {
+                                        remainText = remainText || '';
+                                    }
+                                    break;
+                                    
+                                case 'content_block_delta':
+                                    if (decoded.delta?.type === 'text_delta' && decoded.delta?.text) {
+                                        remainText += decoded.delta.text;
+                                        updateMessageContent(currentStreamingMessage, remainText, true);
+                                        scrollToBottom();
+                                    }
+                                    break;
+                                    
+                                case 'message_stop':
+                                    if (currentStreamingMessage && remainText) {
+                                        messageHistory[messageHistory.length - 1].content = remainText;
+                                    }
+                                    break;
+                            }
+                        } catch (e) {
+                            console.warn('[WP Bedrock] Failed to parse bytes:', e);
+                        }
+                        return;
+                    }
+
+                    // Handle other model formats
+                    let newText = '';
+                    
+                    if (data.output?.message?.content?.[0]?.text) {
+                        newText = data.output.message.content[0].text;
+                    } else if (data.contentBlockDelta?.delta?.text) {
+                        newText = data.contentBlockDelta.delta.text;
+                    } else if (data.delta?.text) {
+                        newText = data.delta.text;
+                    } else if (data.choices?.[0]?.message?.content) {
+                        newText = data.choices[0].message.content;
+                    } else if (data.content?.[0]?.text) {
+                        newText = data.content[0].text;
+                    }
+
+                    if (newText) {
+                        if (!currentStreamingMessage) {
+                            addMessage('', false);
+                        }
+                        remainText += newText;
+                        updateMessageContent(currentStreamingMessage, remainText, true);
+                        scrollToBottom();
+                    }
+
+                } catch (error) {
+                    console.error('[WP Bedrock] Error parsing stream message:', error);
+                    handleStreamError(eventSource, 'Invalid response format');
+                }
+            };
+
+            eventSource.onerror = function(e) {
+                console.error('[WP Bedrock] Stream connection error:', e);
+                
+                if (retryCount < MAX_RETRIES) {
+                    retryCount++;
+                    console.log(`[WP Bedrock] Connection lost. Retrying (${retryCount}/${MAX_RETRIES}) in ${RETRY_DELAY}ms...`);
+                    
+                    eventSource.close();
+                    currentEventSource = null;
+                    setTimeout(() => {
+                        console.log('[WP Bedrock] Attempting to reconnect...');
+                        createEventSource();
+                    }, RETRY_DELAY);
+                } else {
+                    handleStreamError(eventSource, 'Connection failed after multiple retries');
+                }
+            };
+
+            return eventSource;
+        }
+
+        function handleStreamError(eventSource, errorMessage) {
+            console.error('[WP Bedrock]', errorMessage);
+            if (currentStreamingMessage) {
+                updateMessageContent(currentStreamingMessage, 'Error: ' + errorMessage, true);
+            } else {
+                addMessage('Error: ' + errorMessage, false);
+            }
+            removeTypingIndicator();
+            if (eventSource) {
+                eventSource.close();
+                currentEventSource = null;
+            }
+            setProcessingState(false);
+        }
+
+        return createEventSource();
+    }
+
     async function sendMessage() {
         const message = elements.messageInput.val().trim();
         if (!message || isProcessing) return;
+
+        // Reset typing state
+        typingQueue = [];
+        isTyping = false;
+        if (typingTimeout) {
+            clearTimeout(typingTimeout);
+            typingTimeout = null;
+        }
 
         addMessage(message, true);
         elements.messageInput.val('');
@@ -484,92 +893,67 @@ function initChatbot() {
         elements.imageUpload.val('');
 
         setProcessingState(true);
-        showTypingIndicator();
+        
+        // Only show typing indicator in streaming mode
+        if (wpbedrock_chat.enable_stream) {
+            showTypingIndicator();
+        }
 
-        try {
-            const response = await fetch(wpbedrock_chat.ajaxurl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                },
-                body: new URLSearchParams({
-                    action: 'wpbedrock_chat',
-                    nonce: wpbedrock_chat.nonce,
-                    message: message,
-                    history: JSON.stringify([
-                        // Add system prompt as first user message
-                        {
-                            role: 'user',
-                            content: wpbedrock_chat.default_system_prompt || ''
-                        },
-                        // Add assistant response
-                        {
-                            role: 'assistant',
-                            content: ';'
-                        },
-                        // Then add conversation history
-                        ...messageHistory.slice(-wpbedrock_chat.context_length).filter(msg => msg.role === 'user')
-                    ]), // Send system prompt + user messages
-                    stream: wpbedrock_chat.enable_stream ? '1' : '0',
-                    model: wpbedrock_chat.default_model,
-                    temperature: wpbedrock_chat.default_temperature,
-                    system_prompt: wpbedrock_chat.default_system_prompt,
-                    anthropic_version: wpbedrock_chat.default_model.includes('anthropic.claude') ? 'bedrock-2023-05-31' : undefined,
-                    max_tokens: 2000,
-                    temperature: 1,
-                    top_p: 1,
-                    top_k: 5,
-                    tools: selectedTools.length > 0 ? JSON.stringify(selectedTools.map(tool => {
-                        if (wpbedrock_chat.default_model.includes('anthropic.claude')) {
-                            // Format for Claude models
-                            return {
-                                name: tool.function.name,
-                                description: tool.function.description,
-                                input_schema: tool.function.parameters || {}
-                            };
-                        } else if (wpbedrock_chat.default_model.includes('mistral.mistral')) {
-                            // Format for Mistral models
-                            return {
-                                type: 'function',
-                                function: {
-                                    name: tool.function.name,
-                                    description: tool.function.description,
-                                    parameters: tool.function.parameters
-                                }
-                            };
-                        } else if (wpbedrock_chat.default_model.includes('amazon.nova')) {
-                            // Format for Nova models
-                            return {
-                                toolSpec: {
-                                    name: tool.function.name,
-                                    description: tool.function.description,
-                                    inputSchema: {
-                                        json: {
-                                            type: "object",
-                                            properties: tool.function.parameters.properties || {},
-                                            required: tool.function.parameters.required || []
-                                        }
-                                    }
-                                }
-                            };
-                        }
-                        // Default format for other models
-                        return {
+        const params = new URLSearchParams({
+            action: 'wpbedrock_chat_message',
+            nonce: wpbedrock_chat.nonce,
+            message: message,
+            stream: wpbedrock_chat.enable_stream ? '1' : '0'
+        });
+
+        if (selectedTools.length > 0) {
+            params.append('tools', JSON.stringify(selectedTools.map(tool => {
+                if (wpbedrock_chat.default_model.includes('anthropic.claude')) {
+                    return {
+                        name: tool.function.name,
+                        description: tool.function.description,
+                        input_schema: tool.function.parameters || {}
+                    };
+                } else if (wpbedrock_chat.default_model.includes('mistral.mistral')) {
+                    return {
+                        type: 'function',
+                        function: {
                             name: tool.function.name,
                             description: tool.function.description,
-                            input_schema: {
-                                type: "object",
-                                properties: tool.function.parameters.properties || {},
-                                required: tool.function.parameters.required || []
+                            parameters: tool.function.parameters
+                        }
+                    };
+                } else if (wpbedrock_chat.default_model.includes('amazon.nova')) {
+                    return {
+                        toolSpec: {
+                            name: tool.function.name,
+                            description: tool.function.description,
+                            inputSchema: {
+                                json: {
+                                    type: "object",
+                                    properties: tool.function.parameters.properties || {},
+                                    required: tool.function.parameters.required || []
+                                }
                             }
-                        };
-                    })) : ''
-                })
-            });
+                        }
+                    };
+                }
+                return {
+                    name: tool.function.name,
+                    description: tool.function.description,
+                    input_schema: {
+                        type: "object",
+                        properties: tool.function.parameters.properties || {},
+                        required: tool.function.parameters.required || []
+                    }
+                };
+            })));
+        }
 
-            if (!response.ok) throw new Error('Network response was not ok');
+        const url = `${wpbedrock_chat.ajaxurl}?${params.toString()}`;
+        console.log('[WP Bedrock] Request URL:', url);
 
-            const reader = response.body.getReader();
+        try {
             remainText = '';
             runTools = [];
             toolIndex = -1;
@@ -577,11 +961,7 @@ function initChatbot() {
             removeTypingIndicator();
             addMessage('', false); // Create empty message for streaming
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                await processChunk(value);
-            }
+            setupEventSource(url);
         } catch (error) {
             console.error('[WP Bedrock] Chat error:', error);
             removeTypingIndicator();
@@ -590,7 +970,6 @@ function initChatbot() {
                 errorMessage = 'AWS credentials are not configured. Please go to Bedrock AI Agent > Settings to configure your AWS credentials.';
             }
             addMessage(errorMessage, false);
-        } finally {
             setProcessingState(false);
         }
     }

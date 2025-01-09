@@ -19,6 +19,26 @@ class WP_Bedrock_AWS {
     private $retry_delay = 1; // seconds
 
     /**
+     * Log debug message if WP_DEBUG_LOG is enabled
+     *
+     * @param string $message Message to log
+     * @param mixed $data Optional data to include
+     */
+    private function log_debug($message, $data = null) {
+        if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+            $log_message = '[WP Bedrock] ' . $message;
+            if ($data !== null) {
+                if (is_array($data) || is_object($data)) {
+                    $log_message .= ' ' . json_encode($data);
+                } else {
+                    $log_message .= ' ' . strval($data);
+                }
+            }
+            error_log($log_message);
+        }
+    }
+
+    /**
      * Initialize AWS Bedrock client
      *
      * @param string $key AWS access key
@@ -55,7 +75,7 @@ class WP_Bedrock_AWS {
                 return $operation();
             } catch (Exception $e) {
                 $last_exception = $e;
-                error_log("Bedrock API request failed (attempt $attempt of {$this->max_retries}): " . $e->getMessage());
+                $this->log_debug("Bedrock API request failed (attempt $attempt of {$this->max_retries}): " . $e->getMessage());
                 
                 if ($attempt < $this->max_retries) {
                     sleep($this->retry_delay * $attempt); // Exponential backoff
@@ -393,21 +413,23 @@ class WP_Bedrock_AWS {
             throw new Exception('Invalid message format. Expected string or array of messages.');
         }
 
-            error_log('[WP Bedrock] Formatting request body with:');
-            error_log('[WP Bedrock] Model ID: ' . $config['model_id']);
-            error_log('[WP Bedrock] Temperature: ' . $config['temperature']);
-            error_log('[WP Bedrock] Max tokens: ' . $config['max_tokens']);
-            error_log('[WP Bedrock] Messages count: ' . count($messages));
+            $this->log_debug('Formatting request body with:', [
+                'model_id' => $config['model_id'],
+                'temperature' => $config['temperature'],
+                'max_tokens' => $config['max_tokens'],
+                'messages_count' => count($messages)
+            ]);
             
             foreach ($messages as $index => $message) {
-                error_log(sprintf('[WP Bedrock] Message %d:', $index));
-                error_log(sprintf('[WP Bedrock]   Role: %s', $message['role']));
-                error_log(sprintf('[WP Bedrock]   Content type: %s', gettype($message['content'])));
-                error_log(sprintf('[WP Bedrock]   Content: %s', json_encode($message['content'])));
+                $this->log_debug("Message $index:", [
+                    'role' => $message['role'],
+                    'content_type' => gettype($message['content']),
+                    'content' => $message['content']
+                ]);
             }
 
             $request_body = $this->format_request_body($messages, $config, $tools);
-            error_log('[WP Bedrock] Formatted request body: ' . json_encode($request_body));
+            $this->log_debug('Formatted request body:', $request_body);
 
             try {
             $params = [
@@ -416,7 +438,7 @@ class WP_Bedrock_AWS {
                 'modelId' => $config['model_id']
             ];
             
-            error_log('[WP Bedrock] AWS Bedrock request params: ' . json_encode($params));
+            $this->log_debug('AWS Bedrock request params:', $params);
 
             if ($stream) {
                 $response = $this->execute_with_retry(function() use ($params) {
@@ -427,10 +449,11 @@ class WP_Bedrock_AWS {
                 }
                 
                 $eventStream = $response['body'];
-                error_log('[WP Bedrock] Stream started');
-                error_log('[WP Bedrock] Response type: ' . gettype($response['body']));
-                error_log('[WP Bedrock] Model ID: ' . $config['model_id']);
-                error_log('[WP Bedrock] Streaming mode: ' . ($callback ? 'with callback' : 'accumulate only'));
+                $this->log_debug('Stream started', [
+                    'response_type' => gettype($response['body']),
+                    'model_id' => $config['model_id'],
+                    'streaming_mode' => $callback ? 'with callback' : 'accumulate only'
+                ]);
                 
                 if (!is_object($eventStream) || !method_exists($eventStream, 'current')) {
                     throw new Exception('Invalid event stream: expected iterator');
@@ -440,33 +463,33 @@ class WP_Bedrock_AWS {
                 foreach ($eventStream as $event) {
                     try {
                         if (isset($event['chunk'])) {
-                            error_log('[WP Bedrock] Processing chunk of type: ' . gettype($event['chunk']));
+                            $this->log_debug('Processing chunk of type:', gettype($event['chunk']));
                             
                             try {
                                 $chunkBytes = is_object($event['chunk']) && method_exists($event['chunk'], 'getContents') 
                                     ? $event['chunk']->getContents()
                                     : (is_array($event['chunk']) ? json_encode($event['chunk']) : strval($event['chunk']));
                                     
-                                error_log('[WP Bedrock] Successfully processed chunk bytes');
+                                $this->log_debug('Successfully processed chunk bytes');
                             } catch (Exception $e) {
-                                error_log('[WP Bedrock] Error processing chunk: ' . $e->getMessage());
+                                $this->log_debug('Error processing chunk:', $e->getMessage());
                                 continue;
                             }
-                            error_log('[WP Bedrock] Stream chunk received');
+                            $this->log_debug('Stream chunk received');
                             
                             $chunk = json_decode($chunkBytes, true);
                             if ($chunk === null && json_last_error() !== JSON_ERROR_NONE) {
-                                error_log('[WP Bedrock] Failed to decode chunk: ' . json_last_error_msg());
+                                $this->log_debug('Failed to decode chunk:', json_last_error_msg());
                                 continue;
                             }
                             if ($chunk !== null) {
-                                error_log('[WP Bedrock] Decoded chunk: ' . json_encode($chunk));
+                                $this->log_debug('Decoded chunk:', $chunk);
                                 
                                 // Handle Nova model streaming response
                                 if (strpos($config['model_id'], 'us.amazon.nova') === 0) {
                                     if (isset($chunk['contentBlockDelta']) && isset($chunk['contentBlockDelta']['delta']['text'])) {
                                         $text = $chunk['contentBlockDelta']['delta']['text'];
-                                        error_log('Nova text received: ' . $text);
+                                        $this->log_debug('Nova text received:', $text);
                                         $fullResponse .= $text;
                                         if ($callback) {
                                             call_user_func($callback, ['text' => $text]);
@@ -476,17 +499,17 @@ class WP_Bedrock_AWS {
                                     // Claude 3 and other models streaming response format
                                     switch ($chunk['type']) {
                                         case 'message_start':
-                                            error_log('Message start received');
+                                            $this->log_debug('Message start received');
                                             break;
                                             
                                         case 'content_block_start':
-                                            error_log('Content block start received');
+                                            $this->log_debug('Content block start received');
                                             break;
                                             
                                         case 'content_block_delta':
                                             if (isset($chunk['delta']['text'])) {
                                                 $text = $chunk['delta']['text'];
-                                                error_log('Delta text received: ' . $text);
+                                                $this->log_debug('Delta text received:', $text);
                                                 $fullResponse .= $text;
                                                 if ($callback) {
                                                     call_user_func($callback, ['text' => $text]);
@@ -495,20 +518,20 @@ class WP_Bedrock_AWS {
                                             break;
                                             
                                         case 'content_block_stop':
-                                            error_log('Content block stop received');
+                                            $this->log_debug('Content block stop received');
                                             break;
                                             
                                         case 'message_stop':
-                                            error_log('Message stop received');
+                                            $this->log_debug('Message stop received');
                                             break;
                                     }
                                 }
                             } else {
-                                error_log('[WP Bedrock] Failed to decode chunk');
+                                $this->log_debug('Failed to decode chunk');
                             }
                         }
                     } catch (Exception $e) {
-                        error_log('[WP Bedrock] Error processing stream event: ' . $e->getMessage());
+                        $this->log_debug('Error processing stream event:', $e->getMessage());
                     }
                 }
                 return $fullResponse;
@@ -519,30 +542,30 @@ class WP_Bedrock_AWS {
                 
                 try {
                     $responseData = json_encode($response);
-                    error_log('[WP Bedrock] Raw response: ' . ($responseData ?: 'Response not JSON encodable'));
+                    $this->log_debug('Raw response:', $responseData ?: 'Response not JSON encodable');
                     
                     $responseContent = $response['body']->getContents();
-                    error_log('[WP Bedrock] Response content: ' . $responseContent);
+                    $this->log_debug('Response content:', $responseContent);
                     
                     $result = json_decode($responseContent, true);
                     if ($result !== null) {
-                        error_log('[WP Bedrock] Decoded result: ' . json_encode($result));
+                        $this->log_debug('Decoded result:', $result);
                     } else {
-                        error_log('[WP Bedrock] Failed to decode response content');
+                        $this->log_debug('Failed to decode response content');
                         throw new Exception('Failed to decode response content');
                     }
                     
                     if (json_last_error() !== JSON_ERROR_NONE) {
-                        error_log('[WP Bedrock] JSON decode error: ' . json_last_error_msg());
+                        $this->log_debug('JSON decode error:', json_last_error_msg());
                         throw new Exception('Failed to decode response: ' . json_last_error_msg());
                     }
                     
                     $parsedResponse = $this->parse_response($result, $config['model_id']);
-                    error_log('[WP Bedrock] Parsed response: ' . json_encode($parsedResponse));
+                    $this->log_debug('Parsed response:', $parsedResponse);
                     
                     return $parsedResponse;
                 } catch (Exception $e) {
-                    error_log('[WP Bedrock] Error processing response: ' . $e->getMessage());
+                    $this->log_debug('Error processing response:', $e->getMessage());
                     throw $e;
                 }
             }
@@ -659,7 +682,7 @@ class WP_Bedrock_AWS {
                 'modelId' => $config['model_id']
             ];
 
-            error_log('AWS Bedrock image generation request params: ' . json_encode($params));
+            $this->log_debug('AWS Bedrock image generation request params:', $params);
 
             $response = $this->execute_with_retry(function() use ($params) {
                 return $this->client->invokeModel($params);
@@ -779,20 +802,20 @@ class WP_Bedrock_AWS {
      * @return string|array Parsed response
      */
     private function parse_response($result, $model_id) {
-        error_log('[WP Bedrock] Parsing response for model: ' . $model_id);
-        error_log('[WP Bedrock] Response to parse: ' . json_encode($result));
+        $this->log_debug('Parsing response for model:', $model_id);
+        $this->log_debug('Response to parse:', $result);
         
         // Claude models (including Claude 3 and 3.5)
         if (strpos($model_id, 'anthropic.claude') === 0 || strpos($model_id, 'us.anthropic.claude') === 0) {
-            error_log('[WP Bedrock] Parsing Claude response');
+            $this->log_debug('Parsing Claude response');
             if (isset($result['content']) && is_array($result['content'])) {
                 $response = array_reduce($result['content'], function($text, $content) {
                     return $text . ($content['text'] ?? '');
                 }, '');
-                error_log('[WP Bedrock] Parsed Claude response: ' . $response);
+                $this->log_debug('Parsed Claude response:', $response);
                 return $response;
             }
-            error_log('[WP Bedrock] Invalid Claude response format');
+            $this->log_debug('Invalid Claude response format');
         }
         // Nova models (including regional variants)
         else if (strpos($model_id, 'amazon.nova') === 0 || strpos($model_id, 'us.amazon.nova') === 0) {
