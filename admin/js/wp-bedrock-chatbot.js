@@ -232,7 +232,7 @@ function initChatbot() {
         if (imageUrl) {
             messageContent = [
                 { type: "text", text: content },
-                { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageUrl.split(',')[1] } }
+                { image_url: { url: imageUrl } }
             ];
         } else {
             messageContent = [{ type: "text", text: content }];
@@ -280,7 +280,7 @@ function initChatbot() {
             const content = msg.content
                 .map(item => {
                     if (item.type === "text") return item.text;
-                    if (item.type === "image") return "[Image]";
+                    if (item.image_url) return "[Image]";
                     return "";
                 })
                 .filter(Boolean)
@@ -306,7 +306,7 @@ function initChatbot() {
                 const content = msg.content
                     .map(item => {
                         if (item.type === "text") return item.text;
-                        if (item.type === "image") return "[Image]";
+                        if (item.image_url) return "[Image]";
                         return "";
                     })
                     .filter(Boolean)
@@ -479,13 +479,25 @@ function initChatbot() {
                 top_p: parseFloat(wpbedrock_chat.top_p) || 0.9
             };
 
+            // Prepare message content
+            let messageContent;
+            if (imageUrl) {
+                messageContent = [
+                    { type: "text", text: message },
+                    { 
+                        image_url: { 
+                            url: imageUrl 
+                        }
+                    }
+                ];
+            } else {
+                messageContent = [{ type: "text", text: message }];
+            }
+
             const requestBody = BedrockAPI.formatRequestBody(
                 [...previousMessages, {
                     role: 'user',
-                    content: imageUrl ? [
-                        { type: "text", text: message },
-                        { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageUrl.split(',')[1] } }
-                    ] : [{ type: "text", text: message }]
+                    content: messageContent
                 }],
                 modelConfig,
                 selectedTools
