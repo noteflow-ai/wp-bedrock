@@ -212,13 +212,22 @@ class WP_Bedrock_Admin {
             wp_add_inline_script('highlight-js', 'console.log("[WP Bedrock] highlight.js loaded");', 'after');
             wp_add_inline_script('markdown-it', 'console.log("[WP Bedrock] markdown-it loaded");', 'after');
 
-            // Load chatbot script with all dependencies
+            // Load BedrockAPI first
+            wp_enqueue_script(
+                $this->plugin_name . '-api',
+                plugin_dir_url(__FILE__) . 'js/wp-bedrock-api.js',
+                array('jquery'),
+                $this->version,
+                true
+            );
+
+            // Load chatbot script with all dependencies including BedrockAPI
             wp_enqueue_script(
                 $this->plugin_name . '-chatbot',
                 plugin_dir_url(__FILE__) . 'js/wp-bedrock-chatbot.js',
-                array('jquery', 'jquery-ui-dialog', 'highlight-js', 'markdown-it'),
+                array('jquery', 'jquery-ui-dialog', 'highlight-js', 'markdown-it', $this->plugin_name . '-api'),
                 $this->version,
-                true // Load in footer to ensure all dependencies are loaded first
+                true
             );
 
             // Add initialization check and error handling
@@ -625,12 +634,61 @@ class WP_Bedrock_Admin {
     /**
      * Send SSE message
      */
+    /**
+     * Check server configuration for streaming support
+     */
+    private function check_streaming_support() {
+        $issues = [];
+        
+        // Check output buffering
+        if (ob_get_level() > 0) {
+            error_log('[WP Bedrock] Warning: Output buffering is active');
+            $issues[] = 'output_buffering';
+        }
+        
+        // Check compression
+        if (ini_get('zlib.output_compression')) {
+            error_log('[WP Bedrock] Warning: zlib.output_compression is enabled');
+            $issues[] = 'zlib_compression';
+        }
+        
+        // Check FastCGI
+        if (function_exists('fastcgi_finish_request')) {
+            if (ini_get('fastcgi.logging')) {
+                error_log('[WP Bedrock] Warning: FastCGI logging is enabled');
+                $issues[] = 'fastcgi_logging';
+            }
+        }
+        
+        // Check Apache mod_deflate
+        if (function_exists('apache_get_modules') && in_array('mod_deflate', apache_get_modules())) {
+            error_log('[WP Bedrock] Warning: Apache mod_deflate is enabled');
+            $issues[] = 'apache_deflate';
+        }
+        
+        return $issues;
+    }
+
     private function send_sse_message($data) {
         if (connection_status() !== CONNECTION_NORMAL) {
             return;
         }
 
+        // Check for streaming issues
+        static $checked = false;
+        if (!$checked) {
+            $issues = $this->check_streaming_support();
+            if (!empty($issues)) {
+                error_log('[WP Bedrock] Streaming configuration issues detected: ' . implode(', ', $issues));
+            }
+            $checked = true;
+        }
+
+        // First log the raw text if present
         if (isset($data['text'])) {
+            error_log('[WP Bedrock] Streaming content: ' . $data['text']);
+            
+            // Then encode it for SSE
             $data = [
                 'bytes' => base64_encode(json_encode([
                     'type' => 'content_block_delta',
@@ -642,7 +700,11 @@ class WP_Bedrock_Admin {
             ];
         }
 
-        error_log('Sending SSE message: ' . json_encode($data));
+        // Disable output buffering completely
+        while (ob_get_level() > 0) {
+            ob_end_flush();
+        }
+        
         echo "data: " . json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n\n";
         
         if (ob_get_level() > 0) {
@@ -655,26 +717,97 @@ class WP_Bedrock_Admin {
      * Handle chat message request
      */
     public function handle_chat_message() {
+        // Prevent WordPress from buffering output
+        if (!defined('DONOTCACHEPAGE')) {
+            define('DONOTCACHEPAGE', true);
+        }
+        
+        // Remove any WordPress filters that might interfere with output
+        remove_filter('wp_die_handler', '_default_wp_die_handler');
+        
         check_ajax_referer('wpbedrock_chat_nonce', 'nonce');
 
         // Get parameters from request
-        // Get request parameters with defaults from settings
-        $message = isset($_REQUEST['message']) ? sanitize_textarea_field($_REQUEST['message']) : '';
-        $image = isset($_REQUEST['image']) ? $_REQUEST['image'] : '';
-        $model = isset($_REQUEST['model']) ? sanitize_text_field($_REQUEST['model']) : get_option('wpbedrock_model_id', 'anthropic.claude-3-haiku-20240307-v1:0');
-        $temperature = isset($_REQUEST['temperature']) ? floatval($_REQUEST['temperature']) : floatval(get_option('wpbedrock_temperature', '0.7'));
-        $system_prompt = isset($_REQUEST['system_prompt']) ? sanitize_textarea_field($_REQUEST['system_prompt']) : get_option('wpbedrock_system_prompt', 'You are a helpful AI assistant. Respond to user queries in a clear and concise manner.');
-        
-        if (empty($message) && empty($image)) {
-            wp_send_json_error('Message or image is required');
+        // Handle both FormData and JSON requests
+        // Get raw request data
+        $raw_data = file_get_contents('php://input');
+        if (!empty($raw_data)) {
+            // Handle JSON request
+            $request_data = json_decode($raw_data, true);
+        } else {
+            // Handle FormData
+            $request_data = $_POST;
+            // Parse JSON fields if they exist
+            if (isset($request_data['message']) && is_string($request_data['message'])) {
+                $message_json = json_decode($request_data['message'], true);
+                if ($message_json !== null) {
+                    $request_data['message'] = $message_json;
+                }
+            }
+            if (isset($request_data['tools']) && is_string($request_data['tools'])) {
+                $tools_json = json_decode($request_data['tools'], true);
+                if ($tools_json !== null) {
+                    $request_data['tools'] = $tools_json;
+                }
+            }
         }
+
+        // Debug logging
+        error_log('[WP Bedrock] Raw request data: ' . print_r($request_data, true));
+
+        if (empty($request_data) || !isset($request_data['message'])) {
+            wp_send_json_error('Invalid message format');
+        }
+
+        // Parse message JSON if it's a string
+        $message_data = $request_data['message'];
+        if (is_string($message_data)) {
+            // Handle escaped JSON string
+            $message_data = stripslashes($message_data);
+            $message_data = json_decode($message_data, true);
+            if ($message_data === null) {
+                wp_send_json_error('Invalid JSON format in message: ' . json_last_error_msg());
+            }
+        }
+
+        // Handle both direct messages array and nested structure
+        if (isset($message_data['messages'])) {
+            $messages = $message_data['messages'];
+        } elseif (isset($message_data['message']['messages'])) {
+            $messages = $message_data['message']['messages'];
+        } else {
+            wp_send_json_error('Invalid message format: missing messages array');
+        }
+
+        // Additional parameters from message data if present
+        if (isset($message_data['anthropic_version'])) {
+            $requestBody['anthropic_version'] = $message_data['anthropic_version'];
+        }
+        if (isset($message_data['max_tokens'])) {
+            $max_tokens = intval($message_data['max_tokens']);
+        }
+        if (isset($message_data['temperature'])) {
+            $temperature_value = floatval($message_data['temperature']);
+        }
+        if (isset($message_data['top_p'])) {
+            $requestBody['top_p'] = floatval($message_data['top_p']);
+        }
+        if (isset($message_data['top_k'])) {
+            $requestBody['top_k'] = intval($message_data['top_k']);
+        }
+        
+        // Debug logging
+        error_log('[WP Bedrock] Extracted messages: ' . print_r($messages, true));
+        $model = isset($request_data['model']) ? sanitize_text_field($request_data['model']) : get_option('wpbedrock_model_id', 'anthropic.claude-3-haiku-20240307-v1:0');
+        $temperature = isset($request_data['temperature']) ? floatval($request_data['temperature']) : floatval(get_option('wpbedrock_temperature', '0.7'));
+        $system_prompt = isset($request_data['system_prompt']) ? sanitize_textarea_field($request_data['system_prompt']) : get_option('wpbedrock_system_prompt', 'You are a helpful AI assistant. Respond to user queries in a clear and concise manner.');
 
         if ($temperature < 0 || $temperature > 1) {
             wp_send_json_error('Temperature must be between 0 and 1');
         }
 
         $enable_stream = get_option('wpbedrock_enable_stream', '1') === '1';
-        $is_stream = $enable_stream && isset($_REQUEST['stream']) && $_REQUEST['stream'] === '1';
+        $is_stream = $enable_stream && isset($request_data['stream']) && $request_data['stream'] === '1';
 
         try {
             $aws_key = get_option('wpbedrock_aws_key');
@@ -689,62 +822,19 @@ class WP_Bedrock_Admin {
                 wp_send_json_error('AWS credentials not configured');
             }
 
-            $history = isset($_REQUEST['history']) ? json_decode(stripslashes($_REQUEST['history']), true) : [];
-            
-            // Format messages array for Bedrock
-            $messages = [];
-
-            // Add system message
+            // Add system prompt to messages if not empty
             if (!empty($system_prompt_value)) {
-                $messages[] = [
+                array_unshift($messages, [
                     'role' => 'system',
                     'content' => $system_prompt_value
-                ];
+                ]);
             }
 
-            // Add history messages with proper formatting
-            if (is_array($history)) {
-                foreach ($history as $msg) {
-                    if (is_array($msg['content'])) {
-                        // Handle messages with mixed content (text and images)
-                        $content = [];
-                        foreach ($msg['content'] as $item) {
-                            if (isset($item['text'])) {
-                                $content[] = ['text' => $item['text']];
-                            } else if (isset($item['image_url'])) {
-                                $content[] = ['image_url' => $item['image_url']];
-                            }
-                        }
-                        $messages[] = [
-                            'role' => $msg['role'],
-                            'content' => $content
-                        ];
-                    } else {
-                        // Handle simple text messages
-                        $messages[] = [
-                            'role' => $msg['role'],
-                            'content' => $msg['content']
-                        ];
-                    }
-                }
-            }
+            // Debug logging
+            error_log('[WP Bedrock] Final messages array: ' . print_r($messages, true));
 
-            // Add current user message
-            $current_content = [];
-            if (!empty($message)) {
-                $current_content[] = ['text' => $message];
-            }
-            if (!empty($image)) {
-                $current_content[] = ['image_url' => ['url' => $image]];
-            }
-
-            $messages[] = [
-                'role' => 'user',
-                'content' => count($current_content) === 1 ? $current_content[0]['text'] : $current_content
-            ];
-
-            // Get selected tools and format based on model type
-            $tools = isset($_REQUEST['tools']) ? json_decode(stripslashes($_REQUEST['tools']), true) : [];
+            // Get selected tools from request data
+            $tools = isset($request_data['tools']) ? $request_data['tools'] : [];
             $requestBody = [
                 'messages' => $messages,
                 'max_tokens' => $max_tokens,
@@ -806,66 +896,141 @@ class WP_Bedrock_Admin {
             }
 
             // Debug logging
-            error_log('Chat request parameters:');
-            error_log('Message: ' . $message);
-            error_log('Model: ' . $model_id);
-            error_log('Temperature: ' . $temperature_value);
-            error_log('System Prompt: ' . $system_prompt_value);
-            error_log('History length: ' . count($messages));
-            error_log('Messages: ' . json_encode($messages));
+            error_log('[WP Bedrock] Chat request parameters:');
+            error_log('[WP Bedrock] Model: ' . $model_id);
+            error_log('[WP Bedrock] Temperature: ' . $temperature_value);
+            error_log('[WP Bedrock] System Prompt: ' . $system_prompt_value);
+            error_log('[WP Bedrock] History length: ' . count($messages));
+            error_log('[WP Bedrock] Messages: ' . json_encode($messages));
 
             require_once WPBEDROCK_PLUGIN_DIR . 'includes/class-wp-bedrock-aws.php';
             $aws_region = get_option('wpbedrock_aws_region', 'us-west-2');
             $bedrock = new \WPBEDROCK\WP_Bedrock_AWS($aws_key, $aws_secret, $aws_region);
 
             if ($is_stream) {
-                // Disable output buffering and compression
-                @ini_set('output_buffering', 'off');
-                @ini_set('zlib.output_compression', false);
-                @ini_set('implicit_flush', true);
-                while (@ob_end_clean());
-                
-                // Set headers for SSE
-                header('Content-Type: text/event-stream');
-                header('Cache-Control: no-cache');
-                header('Connection: keep-alive');
-                header('X-Accel-Buffering: no');
-                
-                // Send initial response to establish connection
-                echo "retry: 1000\n\n";
-                flush();
-                
-            $bedrock->invoke_model(
-                $messages,
-                array_merge(
-                    [
-                        'model_id' => $model_id,
-                    ],
-                    $requestBody
-                ),
-                [],
-                    true,
-                    function($text) {
-                        $this->send_sse_message(['text' => $text]);
-                    }
-                );
+                // Remove all output buffers
+                while (ob_get_level() > 0) {
+                    ob_end_clean();
+                }
 
+                // Disable WordPress filters that might interfere
+                remove_all_filters('wp_die_handler');
+                remove_all_filters('wp_die_ajax_handler');
+                remove_all_filters('wp_headers');
+                remove_all_filters('nocache_headers');
+
+                // Close session to prevent blocking
+                if (session_status() === PHP_SESSION_ACTIVE) {
+                    session_write_close();
+                }
+
+                // Prevent FastCGI buffering
+                if (function_exists('fastcgi_finish_request')) {
+                    @ini_set('fastcgi.logging', 'off');
+                }
+
+                // Prevent Apache buffering
+                if (function_exists('apache_setenv')) {
+                    @apache_setenv('no-gzip', 1);
+                }
+
+                // Disable PHP buffering and compression
+                @ini_set('zlib.output_compression', 'Off');
+                @ini_set('implicit_flush', true);
+                @ini_set('output_buffering', 'Off');
+                if (function_exists('apache_setenv')) {
+                    @apache_setenv('no-gzip', 1);
+                    @apache_setenv('dont-vary', 1);
+                }
+
+                // Clear and disable output buffering
+                @ob_end_clean();
+                @ini_set('output_buffering', 'Off');
+                @ini_set('zlib.output_compression', false);
+
+                // Set headers for SSE
+                if (!headers_sent()) {
+                    // WordPress no-cache headers
+                    nocache_headers();
+                    
+                    // SSE specific headers
+                    header('Content-Type: text/event-stream');
+                    header('Cache-Control: no-cache, no-store, must-revalidate');
+                    header('Pragma: no-cache');
+                    header('Expires: 0');
+                    header('Connection: keep-alive');
+                    
+                    // CORS headers
+                    $origin = isset($_SERVER['HTTP_ORIGIN']) ? $_SERVER['HTTP_ORIGIN'] : '*';
+                    header('Access-Control-Allow-Origin: ' . $origin);
+                    header('Access-Control-Allow-Credentials: true');
+                    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+                    header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
+                    
+                    // Server configuration headers
+                    header('X-Accel-Buffering: no'); // For Nginx
+                    if (function_exists('\apache_setenv')) {
+                        @\apache_setenv('no-gzip', 1);
+                        @\apache_setenv('dont-vary', 1);
+                    }
+                }
+                
+                // Send initial keepalive and retry settings
+                echo "retry: 1000\n";
+                echo ": keepalive\n\n";
+                flush();
+
+                // Register shutdown function to clean up
+                register_shutdown_function(function() {
+                    // Clean up output buffers
+                    while (ob_get_level() > 0) {
+                        ob_end_clean();
+                    }
+                    // Send final message
+                    echo "event: close\n";
+                    echo "data: {\"done\": true}\n\n";
+                    flush();
+                });
+                
+                $bedrock->invoke_model($requestBody, $model_id, true, function($text) {
+                    $this->send_sse_message(['text' => $text]);
+                });
+
+                error_log('[WP Bedrock] Stream completed');
                 $this->send_sse_message(['done' => true]);
+                // Clean up any remaining output buffers before exit
+                while (ob_get_level() > 0) {
+                    ob_end_flush();
+                }
                 exit;
             } else {
-                $response = $bedrock->invoke_model(
-                    $messages,
-                    [
-                        'model_id' => $model_id,
-                        'temperature' => $temperature_value,
-                        'max_tokens' => $max_tokens
-                    ]
-                );
-                wp_send_json_success($response);
+                $response = $bedrock->invoke_model($requestBody, $model_id);
+                error_log('[WP Bedrock] Response: ' . print_r($response, true));
+                
+                // Extract content from response based on model type
+                $content = '';
+                if (strpos($model_id, 'anthropic.claude') !== false) {
+                    // Claude format
+                    $content = $response['content'][0]['text'] ?? '';
+                } elseif (strpos($model_id, 'mistral.mistral') !== false) {
+                    // Mistral format
+                    $content = $response['choices'][0]['message']['content'] ?? '';
+                } elseif (strpos($model_id, 'amazon.nova') !== false) {
+                    // Nova format
+                    $content = $response['results'][0]['outputText'] ?? '';
+                }
+                error_log('[WP Bedrock] Response: ' . print_r( $content, true));
+
+                wp_send_json_success(['content' => $content]);
             }
         } catch (Exception $e) {
             if ($is_stream) {
+                error_log('[WP Bedrock] Stream error: ' . $e->getMessage());
                 $this->send_sse_message(['error' => $e->getMessage()]);
+                // Clean up any remaining output buffers before exit
+                while (ob_get_level() > 0) {
+                    ob_end_flush();
+                }
                 exit;
             } else {
                 wp_send_json_error($e->getMessage());
