@@ -1,4 +1,4 @@
-=== Bedrock AI Chat ===
+=== AI Chat for Amazon Bedrock ===
 Contributors: glay
 Tags: ai, chatbot, amazon, bedrock, claude, streaming
 Requires at least: 5.0

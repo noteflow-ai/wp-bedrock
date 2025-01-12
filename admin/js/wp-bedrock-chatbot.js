@@ -1,3 +1,326 @@
+// Message formatters
+const formatContentItem = (item) => {
+    try {
+        // Handle string input
+        if (typeof item === "string") {
+            return { type: "text", text: item };
+        }
+
+        // Handle null/undefined
+        if (!item) {
+            console.warn('[BedrockAPI] Received null/undefined content item');
+            return null;
+        }
+
+        // Handle text content
+        if (item.text || item.type === "text") {
+            return { type: "text", text: item.text || item.content || "" };
+        }
+
+        // Handle image content
+        if (item.image_url?.url) {
+            const url = item.image_url.url;
+            const colonIndex = url.indexOf(":");
+            const semicolonIndex = url.indexOf(";");
+            const comma = url.indexOf(",");
+
+            if (colonIndex >= 0 && semicolonIndex >= 0 && comma >= 0) {
+                const mimeType = url.slice(colonIndex + 1, semicolonIndex);
+                const format = mimeType.split("/")[1];
+                const data = url.slice(comma + 1);
+
+                if (!format || !data) {
+                    console.warn('[BedrockAPI] Invalid image data format');
+                    return null;
+                }
+
+                return {
+                    type: "image",
+                    source: {
+                        type: "base64",
+                        media_type: mimeType,
+                        data: data
+                    }
+                };
+            }
+            console.warn('[BedrockAPI] Invalid image URL format');
+            return null;
+        }
+
+        console.warn('[BedrockAPI] Unknown content item type');
+        return null;
+    } catch (error) {
+        console.error('[BedrockAPI] Error formatting content item:', error);
+        return null;
+    }
+};
+
+const formatRequestBody = (messages, modelConfig, tools = []) => {
+    if (!Array.isArray(messages)) {
+        throw new Error('Invalid messages format');
+    }
+
+    if (!modelConfig?.model) {
+        throw new Error('Model ID is required');
+    }
+
+    const model = modelConfig.model;
+
+    // Format messages based on model type
+    if (model.includes("anthropic.claude")) {
+        return formatClaudeRequest(messages, modelConfig, tools);
+    } else if (model.includes("us.amazon.nova")) {
+        return formatNovaRequest(messages, modelConfig, tools);
+    } else if (model.startsWith("amazon.titan")) {
+        return formatTitanRequest(messages, modelConfig);
+    } else if (model.includes("meta.llama")) {
+        return formatLlamaRequest(messages, modelConfig);
+    } else if (model.includes("mistral.mistral")) {
+        return formatMistralRequest(messages, modelConfig, tools);
+    }
+
+    throw new Error(`Unsupported model: ${model}`);
+};
+
+const ClaudeMapper = {
+    system: "user",
+    user: "user",
+    assistant: "assistant"
+};
+
+const formatClaudeRequest = (messages, modelConfig, tools) => {
+    // Convert messages to Claude format and handle role mapping
+    let formattedMessages = messages.map(message => ({
+        role: ClaudeMapper[message.role] || "user",
+        content: Array.isArray(message.content)
+            ? message.content.map(item => {
+                const formatted = formatContentItem(item);
+                return formatted?.text || "";
+              }).join("\n")
+            : message.content
+    }));
+
+    // Insert semicolon placeholder between consecutive user messages
+    for (let i = 0; i < formattedMessages.length - 1; i++) {
+        const message = formattedMessages[i];
+        const nextMessage = formattedMessages[i + 1];
+        
+        if (message.role === "user" && nextMessage.role === "user") {
+            formattedMessages.splice(i + 1, 0, {
+                role: "assistant",
+                content: ";"
+            });
+            i++; // Skip the inserted message
+        }
+    }
+
+    // Ensure first message is from user
+    if (formattedMessages[0]?.role === "assistant") {
+        formattedMessages.unshift({
+            role: "user",
+            content: ";"
+        });
+    }
+
+    // Add system prompt as a user message if present
+    if (modelConfig.system_prompt) {
+        formattedMessages.unshift({
+            role: "user",
+            content: modelConfig.system_prompt
+        });
+    }
+
+    const requestBody = {
+        messages: formattedMessages,
+        max_tokens: modelConfig.max_tokens || 2000,
+        temperature: modelConfig.temperature || 0.7,
+        top_p: modelConfig.top_p || 0.9
+    };
+
+    if (tools && tools.length > 0) {
+        requestBody.tools = tools.map(tool => {
+            const params = tool?.function?.parameters || {};
+            return {
+                name: tool?.function?.name || "",
+                description: tool?.function?.description || "",
+                parameters: {
+                    type: "object",
+                    properties: params.properties || {},
+                    required: params.required || []
+                }
+            };
+        });
+    }
+
+    return requestBody;
+};
+
+const formatNovaRequest = (messages, modelConfig, tools) => {
+    try {
+        const systemMessage = messages.find(m => m.role === "system");
+        const conversationMessages = messages.filter(m => m.role !== "system");
+
+        // Ensure all text content is properly stringified
+        const formatTextContent = (content) => {
+            if (Array.isArray(content)) {
+                return content.map(item => {
+                    const formatted = formatContentItem(item);
+                    return formatted?.text || "";
+                }).join("\n");
+            }
+            return String(content || "");
+        };
+
+        const requestBody = {
+            messages: conversationMessages.map(message => ({
+                role: String(message.role),
+                content: Array.isArray(message.content)
+                    ? message.content.map(item => {
+                        const formatted = formatContentItem(item);
+                        if (!formatted) return null;
+
+                        if (formatted.type === "text") {
+                            return { text: String(formatted.text) };
+                        } else if (formatted.type === "image") {
+                            return { 
+                                image: formatted.source
+                            };
+                        }
+                        return null;
+                    }).filter(Boolean)
+                    : [{ text: String(message.content) }]
+            })),
+            temperature: Number(modelConfig.temperature || 0.7),
+            top_k: Number(modelConfig.top_k || 50),
+            max_tokens: Number(modelConfig.max_tokens || 1000),
+            stop_sequences: Array.isArray(modelConfig.stop) ? modelConfig.stop : []
+        };
+
+        if (systemMessage) {
+            requestBody.system = [{
+                text: formatTextContent(systemMessage.content)
+            }];
+        }
+
+        // Simplify tool configuration
+        if (Array.isArray(tools) && tools.length > 0) {
+            requestBody.toolConfig = {
+                tools: tools.map(tool => ({
+                    toolSpec: {
+                        name: String(tool?.function?.name || ""),
+                        description: String(tool?.function?.description || ""),
+                        inputSchema: {
+                            json: JSON.stringify(tool?.function?.parameters || {})
+                        }
+                    }
+                })),
+                toolChoice: { auto: {} }
+            };
+        }
+
+        // Validate the request body can be properly serialized
+        JSON.parse(JSON.stringify(requestBody));
+        
+        return requestBody;
+    } catch (error) {
+        console.error('[BedrockAPI] Error formatting Nova request:', error);
+        throw new Error('Failed to format Nova request: ' + error.message);
+    }
+};
+
+const formatTitanRequest = (messages, modelConfig) => {
+    const inputText = messages
+        .map(message => {
+            const content = Array.isArray(message.content)
+                ? message.content.map(item => {
+                    const formatted = formatContentItem(item);
+                    return formatted?.text || "";
+                }).join("\n")
+                : message.content;
+            return `${message.role}: ${content}`;
+        })
+        .join("\n\n");
+
+    return {
+        inputText,
+        textGenerationConfig: {
+            maxTokenCount: modelConfig.max_tokens || 4096,
+            temperature: modelConfig.temperature || 0.7,
+            stopSequences: modelConfig.stop || []
+        }
+    };
+};
+
+const formatLlamaRequest = (messages, modelConfig) => {
+    let prompt = "<|begin_of_text|>";
+    
+    const systemMessage = messages.find(m => m.role === "system");
+    if (systemMessage) {
+        const content = Array.isArray(systemMessage.content)
+            ? systemMessage.content.map(item => {
+                const formatted = formatContentItem(item);
+                return formatted?.text || "";
+            }).join("\n")
+            : systemMessage.content;
+        prompt += `<|start_header_id|>system<|end_header_id|>\n${content}<|eot_id|>`;
+    }
+
+    const conversationMessages = messages.filter(m => m.role !== "system");
+    for (const message of conversationMessages) {
+        const role = message.role === "assistant" ? "assistant" : "user";
+        const content = Array.isArray(message.content)
+            ? message.content.map(item => {
+                const formatted = formatContentItem(item);
+                return formatted?.text || "";
+            }).join("\n")
+            : message.content;
+        prompt += `<|start_header_id|>${role}<|end_header_id|>\n${content}<|eot_id|>`;
+    }
+
+    prompt += "<|start_header_id|>assistant<|end_header_id|>";
+
+    return {
+        prompt,
+        max_gen_len: modelConfig.max_tokens || 512,
+        temperature: modelConfig.temperature || 0.7,
+        top_p: modelConfig.top_p || 0.9
+    };
+};
+
+const formatMistralRequest = (messages, modelConfig, tools) => {
+    const formattedMessages = messages.map(message => ({
+        role: message.role === "system" ? "system" :
+              message.role === "assistant" ? "assistant" : "user",
+        content: Array.isArray(message.content)
+            ? message.content.map(item => {
+                const formatted = formatContentItem(item);
+                return formatted?.text || "";
+            }).join("\n")
+            : message.content
+    }));
+
+    const requestBody = {
+        messages: formattedMessages,
+        max_tokens: modelConfig.max_tokens || 4096,
+        temperature: modelConfig.temperature || 0.7,
+        top_p: modelConfig.top_p || 0.9
+    };
+
+    if (tools.length > 0) {
+        requestBody.tool_choice = "auto";
+        requestBody.tools = tools.map(tool => ({
+            type: "function",
+            function: {
+                name: tool?.function?.name,
+                description: tool?.function?.description,
+                parameters: tool?.function?.parameters
+            }
+        }));
+    }
+
+    return requestBody;
+};
+
 function initChatbot() {
     // Check for all required dependencies
     const requiredDeps = {
@@ -5,8 +328,7 @@ function initChatbot() {
         'wpbedrock_chat': () => typeof wpbedrock_chat !== 'undefined',
         'markdownit': () => typeof window.markdownit !== 'undefined',
         'hljs': () => typeof window.hljs !== 'undefined',
-        'jQuery UI Dialog': () => typeof jQuery !== 'undefined' && typeof jQuery.fn.dialog !== 'undefined',
-        'BedrockAPI': () => typeof window.BedrockAPI === 'function'
+        'jQuery UI Dialog': () => typeof jQuery !== 'undefined' && typeof jQuery.fn.dialog !== 'undefined'
     };
 
     // Add timeout tracking
@@ -20,11 +342,11 @@ function initChatbot() {
 
     if (missing.length > 0) {
         if (window.wpBedrockInitAttempts < MAX_ATTEMPTS) {
-            console.log(`[WP Bedrock] Waiting for libraries (attempt ${window.wpBedrockInitAttempts}/${MAX_ATTEMPTS}):`, missing.join(', '));
+            console.log(`[AI Chat for Amazon Bedrock] Waiting for libraries (attempt ${window.wpBedrockInitAttempts}/${MAX_ATTEMPTS}):`, missing.join(', '));
             setTimeout(initChatbot, 100);
             return;
         } else {
-            console.error('[WP Bedrock] Failed to load required libraries after 10 seconds:', missing.join(', '));
+            console.error('[AI Chat for Amazon Bedrock] Failed to load required libraries after 10 seconds:', missing.join(', '));
             const container = document.querySelector('.chat-container');
             if (container) {
                 container.innerHTML = `
@@ -41,7 +363,7 @@ function initChatbot() {
     // Reset attempts counter on successful load
     window.wpBedrockInitAttempts = 0;
 
-    console.log('[WP Bedrock] All dependencies loaded, initializing chatbot...');
+    console.log('[AI Chat for Amazon Bedrock] All dependencies loaded, initializing chatbot...');
     const $ = jQuery;
 
     // Chat state
@@ -113,7 +435,7 @@ function initChatbot() {
                 content: JSON.stringify(result.data)
             };
         } catch (error) {
-            console.error('[WP Bedrock] Tool execution failed:', error);
+            console.error('[AI Chat for Amazon Bedrock] Tool execution failed:', error);
             return {
                 tool_call_id: toolCall.id,
                 role: 'tool',
@@ -192,7 +514,7 @@ function initChatbot() {
         try {
             return md.render(content);
         } catch (e) {
-            console.warn('[WP Bedrock] Failed to process markdown:', e);
+            console.warn('[AI Chat for Amazon Bedrock] Failed to process markdown:', e);
             return content;
         }
     }
@@ -257,16 +579,34 @@ function initChatbot() {
         if (confirm('Are you sure you want to clear the chat history?')) {
             elements.messagesContainer.empty();
             messageHistory = [];
+            
+            const model = wpbedrock_chat.default_model;
             const initialMessage = wpbedrock_chat.initial_message || 'Hello! How can I assist you today?';
+            
+            if (model.includes("anthropic.claude")) {
+                // Claude requires user message first, but we don't need to show it
+                messageHistory = [
+                    {
+                        role: 'user',
+                        content: [{ type: "text", text: ";" }]
+                    },
+                    {
+                        role: 'assistant',
+                        content: [{ type: "text", text: initialMessage }]
+                    }
+                ];
+            } else {
+                // Default behavior for other models
+                messageHistory = [{
+                    role: 'assistant',
+                    content: [{ type: "text", text: initialMessage }]
+                }];
+            }
+            
+            // Always show just the assistant's message
             const messageDiv = createMessageElement(initialMessage, false);
             elements.messagesContainer.append(messageDiv);
-            
-            messageHistory = [{
-                role: 'assistant',
-                content: [{ type: "text", text: initialMessage }]
-            }];
             updateMessageCount();
-           
         }
     }
 
@@ -294,7 +634,7 @@ function initChatbot() {
             button.addClass('button-primary');
             setTimeout(() => button.removeClass('button-primary'), 1000);
         } catch (err) {
-            console.error('[WP Bedrock] Failed to copy chat:', err);
+            console.error('[AI Chat for Amazon Bedrock] Failed to copy chat:', err);
             alert('Failed to copy chat to clipboard');
         }
     }
@@ -471,12 +811,13 @@ function initChatbot() {
         }
 
         try {
-            // Format request using BedrockAPI
+            // Format request using formatRequestBody
             const modelConfig = {
                 model: wpbedrock_chat.default_model,
                 temperature: parseFloat(wpbedrock_chat.temperature) || 0.7,
                 max_tokens: parseInt(wpbedrock_chat.max_tokens) || 2000,
-                top_p: parseFloat(wpbedrock_chat.top_p) || 0.9
+                top_p: parseFloat(wpbedrock_chat.top_p) || 0.9,
+                system_prompt: wpbedrock_chat.default_system_prompt
             };
 
             // Prepare message content
@@ -494,7 +835,7 @@ function initChatbot() {
                 messageContent = [{ type: "text", text: message }];
             }
 
-            const requestBody = BedrockAPI.formatRequestBody(
+            const requestBody = formatRequestBody(
                 [...previousMessages, {
                     role: 'user',
                     content: messageContent
@@ -503,26 +844,31 @@ function initChatbot() {
                 selectedTools
             );
 
-            console.log('[WP Bedrock] Formatted request body:', requestBody);
+            console.log('[AI Chat for Amazon Bedrock] Formatted request body:', requestBody);
 
             // Prepare request data
-            const formData = new FormData();
-            formData.append('action', 'wpbedrock_chat_message');
-            formData.append('nonce', wpbedrock_chat.nonce);
-            formData.append('message', JSON.stringify(requestBody));
-            formData.append('stream', wpbedrock_chat.enable_stream ? '1' : '0');
+            let response;
+            try {
+                const formData = new FormData();
+                formData.append('action', 'wpbedrock_chat_message');
+                formData.append('nonce', wpbedrock_chat.nonce);
+                formData.append('requestBody', JSON.stringify(requestBody));
+                formData.append('stream', wpbedrock_chat.enable_stream ? '1' : '0');
+                formData.append('model_id', wpbedrock_chat.default_model);
 
-            if (selectedTools.length > 0) {
-                formData.append('tools', JSON.stringify(selectedTools));
-            }
+                response = await fetch(wpbedrock_chat.ajaxurl, {
+                    method: 'POST',
+                    body: formData
+                });
 
-            const response = await fetch(wpbedrock_chat.ajaxurl, {
-                method: 'POST',
-                body: formData
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('[AI Chat for Amazon Bedrock] Server error response:', errorText);
+                    throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+                }
+            } catch (error) {
+                console.error('[AI Chat for Amazon Bedrock] Request failed:', error);
+                throw new Error('Failed to send request: ' + error.message);
             }
 
             // Handle streaming response
@@ -549,6 +895,8 @@ function initChatbot() {
                         let text = '';
                         if (data.text) {
                             text = data.text;
+                        } else if (data.output_text) {
+                            text = data.output_text;
                         } else if (data.output?.message?.content?.[0]?.text) {
                             text = data.output.message.content[0].text;
                         } else if (data.contentBlockDelta?.delta?.text) {
@@ -557,6 +905,15 @@ function initChatbot() {
                             text = data.delta.text;
                         } else if (data.output?.content?.[0]?.type === "text") {
                             text = data.output.content[0].text;
+                        } else if (data.bytes) {
+                            try {
+                                const decoded = JSON.parse(atob(data.bytes));
+                                if (decoded.output_text) {
+                                    text = decoded.output_text;
+                                }
+                            } catch (e) {
+                                console.warn('[BedrockAPI] Failed to decode bytes:', e);
+                            }
                         }
 
                         if (text && currentStreamingMessage) {
@@ -569,14 +926,16 @@ function initChatbot() {
             } else {
                 // Handle non-streaming response
                 const data = await response.json();
-                if (!data.success) throw new Error(data.data || 'Unknown error');
+                if (!data.success) {
+                    throw new Error(data.data || 'Unknown error');
+                }
 
                 // Extract content from the response data
                 const content = data.data.content || data.data;
                 addMessage(content, false);
             }
         } catch (error) {
-            console.error('[WP Bedrock] Chat error:', error);
+            console.error('[AI Chat for Amazon Bedrock] Chat error:', error);
             removeTypingIndicator();
             addMessage(`Error: ${error.message}`, false);
         } finally {
@@ -608,7 +967,7 @@ function initChatbot() {
 
             return true;
         } catch (error) {
-            console.error('[WP Bedrock] Failed to initialize libraries:', error);
+            console.error('[AI Chat for Amazon Bedrock] Failed to initialize libraries:', error);
             return false;
         }
     }
@@ -620,14 +979,42 @@ function initChatbot() {
         updateMessageCount();
         
         if (messageHistory.length === 0) {
+            const model = wpbedrock_chat.default_model;
             const initialMessage = wpbedrock_chat.initial_message || 'Hello! How can I assist you today?';
-            const messageDiv = createMessageElement(initialMessage, false);
-            elements.messagesContainer.append(messageDiv);
             
-            messageHistory = [{
-                role: 'assistant',
-                content: [{ type: "text", text: initialMessage }]
-            }];
+            // Format initial messages based on model type
+            if (model.includes("anthropic.claude")) {
+                // Claude requires user message first, but we don't need to show it
+                messageHistory = [
+                    {
+                        role: 'user',
+                        content: [{ type: "text", text: ";" }]
+                    },
+                    {
+                        role: 'assistant',
+                        content: [{ type: "text", text: initialMessage }]
+                    }
+                ];
+                // Only show the assistant's message
+                const messageDiv = createMessageElement(initialMessage, false);
+                elements.messagesContainer.append(messageDiv);
+            } else if (model.includes("amazon.nova")) {
+                // Nova can handle assistant first message
+                messageHistory = [{
+                    role: 'assistant',
+                    content: [{ type: "text", text: initialMessage }]
+                }];
+                const messageDiv = createMessageElement(initialMessage, false);
+                elements.messagesContainer.append(messageDiv);
+            } else {
+                // Default behavior for other models
+                messageHistory = [{
+                    role: 'assistant',
+                    content: [{ type: "text", text: initialMessage }]
+                }];
+                const messageDiv = createMessageElement(initialMessage, false);
+                elements.messagesContainer.append(messageDiv);
+            }
             updateMessageCount();
         }
     } else {

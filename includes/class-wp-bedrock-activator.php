@@ -87,7 +87,7 @@ class WP_Bedrock_Activator {
                     throw new \Exception($wpdb->last_error);
                 }
             } catch (\Exception $e) {
-                error_log('WP Bedrock activation error: ' . $e->getMessage());
+                error_log('AI Chat for Amazon Bedrock activation error: ' . $e->getMessage());
             }
             ob_clean();
         }

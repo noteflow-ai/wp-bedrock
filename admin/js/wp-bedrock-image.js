@@ -1,6 +1,6 @@
 jQuery(document).ready(function($) {
     if (!wpbedrock_image) {
-        console.error('WP Bedrock Image configuration not found');
+        console.error('AI Chat for Amazon Bedrock Image configuration not found');
         return;
     }
 
@@ -179,7 +179,7 @@ jQuery(document).ready(function($) {
         }
 
         // Handle Nova Reel video generation
-        if (model && model.includes('amazon.nova-reel')) {
+        if (model && model.includes('us.amazon.nova-reel')) {
             const requestBody = {
                 taskType: 'TEXT_VIDEO',
                 textToVideoParams: {
@@ -235,7 +235,7 @@ jQuery(document).ready(function($) {
         }
 
         // Handle Nova Canvas image generation
-        if (model && model.includes('amazon.nova-canvas')) {
+        if (model && model.includes('us.amazon.nova-canvas')) {
             return {
                 taskType: 'TEXT_IMAGE',
                 textToImageParams: {
@@ -462,7 +462,7 @@ jQuery(document).ready(function($) {
                 throw new Error('Failed to format request body');
             }
 
-            const isVideoRequest = modelSettings?.model && modelSettings.model === 'amazon.nova-reel-v1:0';
+            const isVideoRequest = modelSettings?.model && modelSettings.model === 'us.amazon.nova-reel-v1:0';
 
             const response = await generateWithRetry({
                 action: 'wpbedrock_generate_image',

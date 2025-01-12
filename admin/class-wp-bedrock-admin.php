@@ -140,14 +140,14 @@ class WP_Bedrock_Admin {
             ),
             // Bedrock Nova Canvas Models
             array(
-                'id' => 'amazon.nova-canvas-v1',
+                'id' => 'us.amazon.nova-canvas-v1',
                 'name' => 'Nova Canvas v1',
                 'description' => 'Nova Canvas image generation',
                 'max_size' => 1792,
                 'type' => 'bedrock-nova'
             ),
             array(
-                'id' => 'amazon.nova-reel-v1',
+                'id' => 'us.amazon.nova-reel-v1',
                 'name' => 'Nova Reel',
                 'description' => 'Nova Reel image generation',
                 'max_size' => 1792,
@@ -209,24 +209,15 @@ class WP_Bedrock_Admin {
             wp_add_inline_script('markdown-it', 'window.markdownit = markdownit;', 'after');
 
             // Add debug logging
-            wp_add_inline_script('highlight-js', 'console.log("[WP Bedrock] highlight.js loaded");', 'after');
-            wp_add_inline_script('markdown-it', 'console.log("[WP Bedrock] markdown-it loaded");', 'after');
+            wp_add_inline_script('highlight-js', 'console.log("[AI Chat for Amazon Bedrock] highlight.js loaded");', 'after');
+            wp_add_inline_script('markdown-it', 'console.log("[AI Chat for Amazon Bedrock] markdown-it loaded");', 'after');
 
-            // Load BedrockAPI first
-            wp_enqueue_script(
-                $this->plugin_name . '-api',
-                plugin_dir_url(__FILE__) . 'js/wp-bedrock-api.js',
-                array('jquery'),
-                $this->version,
-                true
-            );
-
-            // Load chatbot script with all dependencies including BedrockAPI
+            // Load chatbot script with all dependencies and unique version
             wp_enqueue_script(
                 $this->plugin_name . '-chatbot',
                 plugin_dir_url(__FILE__) . 'js/wp-bedrock-chatbot.js',
-                array('jquery', 'jquery-ui-dialog', 'highlight-js', 'markdown-it', $this->plugin_name . '-api'),
-                $this->version,
+                array('jquery', 'jquery-ui-dialog', 'highlight-js', 'markdown-it'),
+                $this->version . '.' . time(), // Add timestamp to prevent caching
                 true
             );
 
@@ -243,7 +234,7 @@ class WP_Bedrock_Admin {
                 function initializeChat() {
                     var missing = checkDependencies();
                     if (missing.length > 0) {
-                        console.error("[WP Bedrock] Missing required libraries:", missing.join(", "));
+                        console.error("[AI Chat for Amazon Bedrock] Missing required libraries:", missing.join(", "));
                         var container = document.querySelector(".chat-container");
                         if (container) {
                             container.innerHTML = "<div class=\"error-message\" style=\"padding: 20px; color: #721c24; background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; margin: 10px;\">" +
@@ -306,19 +297,19 @@ class WP_Bedrock_Admin {
 
                 // AWS Nova Series
                 array(
-                    'id' => 'us.amazon.nova-micro-v1:0',
+                    'id' => 'us.us.amazon.nova-micro-v1:0',
                     'name' => 'Nova Micro',
                     'description' => 'Lightweight model for simple tasks',
                     'context_length' => 4000
                 ),
                 array(
-                    'id' => 'us.amazon.nova-lite-v1:0',
+                    'id' => 'us.us.amazon.nova-lite-v1:0',
                     'name' => 'Nova Lite',
                     'description' => 'Balanced performance for general use',
                     'context_length' => 8000
                 ),
                 array(
-                    'id' => 'us.amazon.nova-pro-v1:0',
+                    'id' => 'us.us.amazon.nova-pro-v1:0',
                     'name' => 'Nova Pro',
                     'description' => 'Advanced model for complex tasks',
                     'context_length' => 16000
@@ -396,8 +387,8 @@ class WP_Bedrock_Admin {
      */
     public function add_plugin_admin_menu() {
         add_menu_page(
-            'Bedrock AI Agent',
-            'Bedrock AI Agent',
+            'AI Chat for Amazon Bedrock',
+            'AI Chat for Amazon Bedrock',
             'manage_options',
             $this->plugin_name,
             array($this, 'display_plugin_setup_page'),
@@ -546,14 +537,14 @@ class WP_Bedrock_Admin {
             ),
             // Bedrock Nova Canvas Models
             array(
-                'id' => 'amazon.nova-canvas-v1',
+                'id' => 'us.amazon.nova-canvas-v1',
                 'name' => 'Nova Canvas v1',
                 'description' => 'Nova Canvas image generation',
                 'max_size' => 1792,
                 'type' => 'bedrock-nova'
             ),
             array(
-                'id' => 'amazon.nova-reel-v1',
+                'id' => 'us.amazon.nova-reel-v1',
                 'name' => 'Nova Reel',
                 'description' => 'Nova Reel image generation',
                 'max_size' => 1792,
@@ -637,32 +628,151 @@ class WP_Bedrock_Admin {
     /**
      * Check server configuration for streaming support
      */
+    /**
+     * Set up environment for streaming response
+     */
+    private function setup_stream_environment() {
+        if (!defined('DONOTCACHEPAGE')) {
+            define('DONOTCACHEPAGE', true);
+        }
+
+        // Remove WordPress filters
+        remove_filter('wp_die_handler', '_default_wp_die_handler');
+        remove_all_filters('wp_die_handler');
+        remove_all_filters('wp_die_ajax_handler');
+        remove_all_filters('wp_headers');
+        remove_all_filters('nocache_headers');
+
+        // Clear output buffers
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+
+        // Close session
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+
+        // Configure PHP settings
+        @ini_set('zlib.output_compression', 'Off');
+        @ini_set('implicit_flush', true);
+        @ini_set('output_buffering', 'Off');
+
+        // Configure server settings
+        if (function_exists('apache_setenv')) {
+            @apache_setenv('no-gzip', 1);
+            @apache_setenv('dont-vary', 1);
+        }
+        if (function_exists('fastcgi_finish_request')) {
+            @ini_set('fastcgi.logging', 'off');
+        }
+
+        // Set headers
+        if (!headers_sent()) {
+            nocache_headers();
+            header('Content-Type: text/event-stream');
+            header('Cache-Control: no-cache, no-store, must-revalidate');
+            header('Pragma: no-cache');
+            header('Expires: 0');
+            header('Connection: keep-alive');
+            header('X-Accel-Buffering: no');
+
+            $origin = isset($_SERVER['HTTP_ORIGIN']) ? $_SERVER['HTTP_ORIGIN'] : '*';
+            header('Access-Control-Allow-Origin: ' . $origin);
+            header('Access-Control-Allow-Credentials: true');
+            header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+            header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
+        }
+
+        // Send initial SSE data
+        echo "retry: 1000\n";
+        echo ": keepalive\n\n";
+        flush();
+
+        // Register shutdown function
+        register_shutdown_function(function() {
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+            echo "event: close\n";
+            echo "data: {\"done\": true}\n\n";
+            flush();
+        });
+    }
+
+    /**
+     * Extract content from streaming chunk based on model type
+     */
+    private function extract_chunk_content($chunk, $model_id) {
+        if (!$chunk) return null;
+
+        try {
+            if (strpos($model_id, 'anthropic.claude') !== false) {
+                return $chunk['delta']['text'] ?? null;
+            } elseif (strpos($model_id, 'mistral.mistral') !== false) {
+                return $chunk['choices'][0]['delta']['content'] ?? null;
+            } elseif (strpos($model_id, 'us.amazon.nova') !== false) {
+                return $chunk['outputText'] ?? null;
+            } elseif (strpos($model_id, 'meta.llama') !== false) {
+                return $chunk['generation'] ?? null;
+            }
+        } catch (Exception $e) {
+            error_log('[AI Chat for Amazon Bedrock] Error extracting chunk content: ' . $e->getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Extract content from complete response based on model type
+     */
+    private function extract_response_content($response, $model_id) {
+        if (!$response) return '';
+
+        try {
+            if (strpos($model_id, 'anthropic.claude') !== false) {
+                return $response['content'][0]['text'] ?? '';
+            } elseif (strpos($model_id, 'mistral.mistral') !== false) {
+                return $response['choices'][0]['message']['content'] ?? '';
+            } elseif (strpos($model_id, 'us.amazon.nova') !== false) {
+                return $response['results'][0]['outputText'] ?? '';
+            } elseif (strpos($model_id, 'meta.llama') !== false) {
+                return $response['generation'] ?? '';
+            }
+        } catch (Exception $e) {
+            error_log('[AI Chat for Amazon Bedrock] Error extracting response content: ' . $e->getMessage());
+        }
+        return '';
+    }
+
+    /**
+     * Check server configuration for streaming support
+     */
     private function check_streaming_support() {
         $issues = [];
         
         // Check output buffering
         if (ob_get_level() > 0) {
-            error_log('[WP Bedrock] Warning: Output buffering is active');
+            error_log('[AI Chat for Amazon Bedrock] Warning: Output buffering is active');
             $issues[] = 'output_buffering';
         }
         
         // Check compression
         if (ini_get('zlib.output_compression')) {
-            error_log('[WP Bedrock] Warning: zlib.output_compression is enabled');
+            error_log('[AI Chat for Amazon Bedrock] Warning: zlib.output_compression is enabled');
             $issues[] = 'zlib_compression';
         }
         
         // Check FastCGI
         if (function_exists('fastcgi_finish_request')) {
             if (ini_get('fastcgi.logging')) {
-                error_log('[WP Bedrock] Warning: FastCGI logging is enabled');
+                error_log('[AI Chat for Amazon Bedrock] Warning: FastCGI logging is enabled');
                 $issues[] = 'fastcgi_logging';
             }
         }
         
         // Check Apache mod_deflate
         if (function_exists('apache_get_modules') && in_array('mod_deflate', apache_get_modules())) {
-            error_log('[WP Bedrock] Warning: Apache mod_deflate is enabled');
+            error_log('[AI Chat for Amazon Bedrock] Warning: Apache mod_deflate is enabled');
             $issues[] = 'apache_deflate';
         }
         
@@ -679,14 +789,14 @@ class WP_Bedrock_Admin {
         if (!$checked) {
             $issues = $this->check_streaming_support();
             if (!empty($issues)) {
-                error_log('[WP Bedrock] Streaming configuration issues detected: ' . implode(', ', $issues));
+                error_log('[AI Chat for Amazon Bedrock] Streaming configuration issues detected: ' . implode(', ', $issues));
             }
             $checked = true;
         }
 
         // First log the raw text if present
         if (isset($data['text'])) {
-            error_log('[WP Bedrock] Streaming content: ' . $data['text']);
+            error_log('[AI Chat for Amazon Bedrock] Streaming content: ' . $data['text']);
             
             // Then encode it for SSE
             $data = [
@@ -716,318 +826,147 @@ class WP_Bedrock_Admin {
     /**
      * Handle chat message request
      */
+    /**
+     * Handle chat message request
+     */
     public function handle_chat_message() {
-        // Prevent WordPress from buffering output
-        if (!defined('DONOTCACHEPAGE')) {
-            define('DONOTCACHEPAGE', true);
-        }
-        
-        // Remove any WordPress filters that might interfere with output
-        remove_filter('wp_die_handler', '_default_wp_die_handler');
-        
-        check_ajax_referer('wpbedrock_chat_nonce', 'nonce');
-
-        // Get parameters from request
-        // Handle both FormData and JSON requests
-        // Get raw request data
-        $raw_data = file_get_contents('php://input');
-        if (!empty($raw_data)) {
-            // Handle JSON request
-            $request_data = json_decode($raw_data, true);
-        } else {
-            // Handle FormData
-            $request_data = $_POST;
-            // Parse JSON fields if they exist
-            if (isset($request_data['message']) && is_string($request_data['message'])) {
-                $message_json = json_decode($request_data['message'], true);
-                if ($message_json !== null) {
-                    $request_data['message'] = $message_json;
-                }
-            }
-            if (isset($request_data['tools']) && is_string($request_data['tools'])) {
-                $tools_json = json_decode($request_data['tools'], true);
-                if ($tools_json !== null) {
-                    $request_data['tools'] = $tools_json;
-                }
-            }
-        }
-
-        // Debug logging
-        error_log('[WP Bedrock] Raw request data: ' . print_r($request_data, true));
-
-        if (empty($request_data) || !isset($request_data['message'])) {
-            wp_send_json_error('Invalid message format');
-        }
-
-        // Parse message JSON if it's a string
-        $message_data = $request_data['message'];
-        if (is_string($message_data)) {
-            // Handle escaped JSON string
-            $message_data = stripslashes($message_data);
-            $message_data = json_decode($message_data, true);
-            if ($message_data === null) {
-                wp_send_json_error('Invalid JSON format in message: ' . json_last_error_msg());
-            }
-        }
-
-        // Handle both direct messages array and nested structure
-        if (isset($message_data['messages'])) {
-            $messages = $message_data['messages'];
-        } elseif (isset($message_data['message']['messages'])) {
-            $messages = $message_data['message']['messages'];
-        } else {
-            wp_send_json_error('Invalid message format: missing messages array');
-        }
-
-        // Additional parameters from message data if present
-        if (isset($message_data['anthropic_version'])) {
-            $requestBody['anthropic_version'] = $message_data['anthropic_version'];
-        }
-        if (isset($message_data['max_tokens'])) {
-            $max_tokens = intval($message_data['max_tokens']);
-        }
-        if (isset($message_data['temperature'])) {
-            $temperature_value = floatval($message_data['temperature']);
-        }
-        if (isset($message_data['top_p'])) {
-            $requestBody['top_p'] = floatval($message_data['top_p']);
-        }
-        if (isset($message_data['top_k'])) {
-            $requestBody['top_k'] = intval($message_data['top_k']);
-        }
-        
-        // Debug logging
-        error_log('[WP Bedrock] Extracted messages: ' . print_r($messages, true));
-        $model = isset($request_data['model']) ? sanitize_text_field($request_data['model']) : get_option('wpbedrock_model_id', 'anthropic.claude-3-haiku-20240307-v1:0');
-        $temperature = isset($request_data['temperature']) ? floatval($request_data['temperature']) : floatval(get_option('wpbedrock_temperature', '0.7'));
-        $system_prompt = isset($request_data['system_prompt']) ? sanitize_textarea_field($request_data['system_prompt']) : get_option('wpbedrock_system_prompt', 'You are a helpful AI assistant. Respond to user queries in a clear and concise manner.');
-
-        if ($temperature < 0 || $temperature > 1) {
-            wp_send_json_error('Temperature must be between 0 and 1');
-        }
-
-        $enable_stream = get_option('wpbedrock_enable_stream', '1') === '1';
-        $is_stream = $enable_stream && isset($request_data['stream']) && $request_data['stream'] === '1';
-
         try {
-            $aws_key = get_option('wpbedrock_aws_key');
-            $aws_secret = get_option('wpbedrock_aws_secret');
-            
-            $model_id = $model;
-            $temperature_value = $temperature;
-            $max_tokens = intval(get_option('wpbedrock_max_tokens', '2000'));
-            $system_prompt_value = $system_prompt;
+            // Validate nonce
+            check_ajax_referer('wpbedrock_chat_nonce', 'nonce');
 
-            if (empty($aws_key) || empty($aws_secret)) {
-                wp_send_json_error('AWS credentials not configured');
+            // Get request data
+            $request_data = $_POST;
+            $model_id = isset($request_data['model_id']) 
+                ? sanitize_text_field($request_data['model_id']) 
+                : get_option('wpbedrock_model_id', 'anthropic.claude-3-haiku-20240307-v1:0');
+
+            // Parse request body from POST data
+            $requestBody = null;
+            if (!isset($_POST['requestBody'])) {
+                error_log('[WP Bedrock] Request body is missing from POST data');
+                error_log('[WP Bedrock] POST data: ' . print_r($_POST, true));
+                throw new Exception('Request body is missing');
             }
 
-            // Add system prompt to messages if not empty
-            if (!empty($system_prompt_value)) {
-                array_unshift($messages, [
-                    'role' => 'system',
-                    'content' => $system_prompt_value
-                ]);
+            // Log raw request for debugging
+            error_log('[WP Bedrock] Raw request body: ' . $_POST['requestBody']);
+
+            // WordPress automatically adds slashes, so we need to remove them
+            $requestBody = json_decode(stripslashes($_POST['requestBody']), true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                $error_msg = json_last_error_msg();
+                error_log('[WP Bedrock] JSON decode error: ' . $error_msg);
+                throw new Exception('Invalid request body: ' . $error_msg);
             }
 
-            // Debug logging
-            error_log('[WP Bedrock] Final messages array: ' . print_r($messages, true));
+            if (!$requestBody) {
+                throw new Exception('Request body is required');
+            }
 
-            // Get selected tools from request data
-            $tools = isset($request_data['tools']) ? $request_data['tools'] : [];
-            $requestBody = [
-                'messages' => $messages,
-                'max_tokens' => $max_tokens,
-                'temperature' => $temperature_value,
-                'top_p' => 0.9,
-                'top_k' => 5
-            ];
-
-            // Format tools based on model type
-            if (strpos($model_id, 'anthropic.claude') !== false) {
-                // Claude format
-                $requestBody['anthropic_version'] = 'bedrock-2023-05-31';
-                if (!empty($tools)) {
-                    $requestBody['tools'] = array_map(function($tool) {
-                        return [
-                            'name' => $tool['function']['name'] ?? '',
-                            'description' => $tool['function']['description'] ?? '',
-                            'input_schema' => $tool['function']['parameters'] ?? []
-                        ];
-                    }, $tools);
-                }
-            } elseif (strpos($model_id, 'mistral.mistral') !== false) {
-                // Mistral format
-                if (!empty($tools)) {
-                    $requestBody['tool_choice'] = 'auto';
-                    $requestBody['tools'] = array_map(function($tool) {
-                        return [
-                            'type' => 'function',
-                            'function' => [
+            // Parse tools if provided
+            if (isset($request_data['tools']) && is_string($request_data['tools'])) {
+                $tools = json_decode($request_data['tools'], true);
+                if (json_last_error() === JSON_ERROR_NONE && !empty($tools)) {
+                    // Format tools based on model type
+                    if (strpos($model_id, 'anthropic.claude') !== false) {
+                        $requestBody['tools'] = array_map(function($tool) {
+                            return [
                                 'name' => $tool['function']['name'] ?? '',
                                 'description' => $tool['function']['description'] ?? '',
-                                'parameters' => $tool['function']['parameters'] ?? []
-                            ]
-                        ];
-                    }, $tools);
-                }
-            } elseif (strpos($model_id, 'amazon.nova') !== false) {
-                // Nova format
-                if (!empty($tools)) {
-                    $requestBody['toolConfig'] = [
-                        'tools' => array_map(function($tool) {
-                            return [
-                                'toolSpec' => [
-                                    'name' => $tool['function']['name'] ?? '',
-                                    'description' => $tool['function']['description'] ?? '',
-                                    'inputSchema' => [
-                                        'json' => [
-                                            'type' => 'object',
-                                            'properties' => $tool['function']['parameters']['properties'] ?? [],
-                                            'required' => $tool['function']['parameters']['required'] ?? []
+                                'parameters' => $tool['function']['parameters'] ?? [],
+                                'display_height_px' => 300,
+                                'display_width_px' => 500
+                            ];
+                        }, $tools);
+                    } elseif (strpos($model_id, 'us.amazon.nova') !== false) {
+                        $requestBody['toolConfig'] = [
+                            'tools' => array_map(function($tool) {
+                                return [
+                                    'toolSpec' => [
+                                        'name' => $tool['function']['name'] ?? '',
+                                        'description' => $tool['function']['description'] ?? '',
+                                        'inputSchema' => [
+                                            'json' => [
+                                                'type' => 'object',
+                                                'properties' => $tool['function']['parameters']['properties'] ?? [],
+                                                'required' => $tool['function']['parameters']['required'] ?? []
+                                            ]
                                         ]
                                     ]
-                                ]
+                                ];
+                            }, $tools),
+                            'toolChoice' => ['auto' => []]
+                        ];
+                    } elseif (strpos($model_id, 'mistral.mistral') !== false) {
+                        $requestBody['tools'] = array_map(function($tool) {
+                            return [
+                                'type' => 'function',
+                                'function' => $tool['function']
                             ];
-                        }, $tools),
-                        'toolChoice' => ['auto' => []]
-                    ];
+                        }, $tools);
+                        $requestBody['tool_choice'] = 'auto';
+                    }
                 }
             }
 
-            // Debug logging
-            error_log('[WP Bedrock] Chat request parameters:');
-            error_log('[WP Bedrock] Model: ' . $model_id);
-            error_log('[WP Bedrock] Temperature: ' . $temperature_value);
-            error_log('[WP Bedrock] System Prompt: ' . $system_prompt_value);
-            error_log('[WP Bedrock] History length: ' . count($messages));
-            error_log('[WP Bedrock] Messages: ' . json_encode($messages));
-
-            require_once WPBEDROCK_PLUGIN_DIR . 'includes/class-wp-bedrock-aws.php';
+            // Get AWS credentials
+            $aws_key = get_option('wpbedrock_aws_key');
+            $aws_secret = get_option('wpbedrock_aws_secret');
             $aws_region = get_option('wpbedrock_aws_region', 'us-west-2');
+
+            if (empty($aws_key) || empty($aws_secret)) {
+                throw new Exception('AWS credentials not configured');
+            }
+
+            // Initialize AWS client
+            require_once WPBEDROCK_PLUGIN_DIR . 'includes/class-wp-bedrock-aws.php';
+            
+            // Get configured region or use default
+            $aws_region = get_option('wpbedrock_aws_region');
+            if (empty($aws_region)) {
+                $aws_region = 'us-west-2';
+            }
+            
             $bedrock = new \WPBEDROCK\WP_Bedrock_AWS($aws_key, $aws_secret, $aws_region);
 
-            if ($is_stream) {
-                // Remove all output buffers
-                while (ob_get_level() > 0) {
-                    ob_end_clean();
-                }
-
-                // Disable WordPress filters that might interfere
-                remove_all_filters('wp_die_handler');
-                remove_all_filters('wp_die_ajax_handler');
-                remove_all_filters('wp_headers');
-                remove_all_filters('nocache_headers');
-
-                // Close session to prevent blocking
-                if (session_status() === PHP_SESSION_ACTIVE) {
-                    session_write_close();
-                }
-
-                // Prevent FastCGI buffering
-                if (function_exists('fastcgi_finish_request')) {
-                    @ini_set('fastcgi.logging', 'off');
-                }
-
-                // Prevent Apache buffering
-                if (function_exists('apache_setenv')) {
-                    @apache_setenv('no-gzip', 1);
-                }
-
-                // Disable PHP buffering and compression
-                @ini_set('zlib.output_compression', 'Off');
-                @ini_set('implicit_flush', true);
-                @ini_set('output_buffering', 'Off');
-                if (function_exists('apache_setenv')) {
-                    @apache_setenv('no-gzip', 1);
-                    @apache_setenv('dont-vary', 1);
-                }
-
-                // Clear and disable output buffering
-                @ob_end_clean();
-                @ini_set('output_buffering', 'Off');
-                @ini_set('zlib.output_compression', false);
-
-                // Set headers for SSE
-                if (!headers_sent()) {
-                    // WordPress no-cache headers
-                    nocache_headers();
+            // Initialize streaming flag
+            $enable_stream = get_option('wpbedrock_enable_stream', '1') === '1';
+            $is_stream = false;
+            
+            // Check if streaming is requested and enabled
+            if ($enable_stream && isset($request_data['stream']) && $request_data['stream'] === '1') {
+                $is_stream = true;
+                $this->setup_stream_environment();
+                
+                try {
+                    $bedrock->invoke_model($requestBody, $model_id, true, function($chunk) use ($model_id) {
+                        $text = $this->extract_chunk_content($chunk, $model_id);
+                        if ($text !== null) {
+                            $this->send_sse_message(['text' => $text]);
+                        }
+                    });
                     
-                    // SSE specific headers
-                    header('Content-Type: text/event-stream');
-                    header('Cache-Control: no-cache, no-store, must-revalidate');
-                    header('Pragma: no-cache');
-                    header('Expires: 0');
-                    header('Connection: keep-alive');
-                    
-                    // CORS headers
-                    $origin = isset($_SERVER['HTTP_ORIGIN']) ? $_SERVER['HTTP_ORIGIN'] : '*';
-                    header('Access-Control-Allow-Origin: ' . $origin);
-                    header('Access-Control-Allow-Credentials: true');
-                    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-                    header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
-                    
-                    // Server configuration headers
-                    header('X-Accel-Buffering: no'); // For Nginx
-                    if (function_exists('\apache_setenv')) {
-                        @\apache_setenv('no-gzip', 1);
-                        @\apache_setenv('dont-vary', 1);
-                    }
+                    $this->send_sse_message(['done' => true]);
+                } catch (Exception $e) {
+                    error_log('[AI Chat for Amazon Bedrock] Stream error: ' . $e->getMessage());
+                    $this->send_sse_message(['error' => $e->getMessage()]);
                 }
                 
-                // Send initial keepalive and retry settings
-                echo "retry: 1000\n";
-                echo ": keepalive\n\n";
-                flush();
-
-                // Register shutdown function to clean up
-                register_shutdown_function(function() {
-                    // Clean up output buffers
-                    while (ob_get_level() > 0) {
-                        ob_end_clean();
-                    }
-                    // Send final message
-                    echo "event: close\n";
-                    echo "data: {\"done\": true}\n\n";
-                    flush();
-                });
-                
-                $bedrock->invoke_model($requestBody, $model_id, true, function($text) {
-                    $this->send_sse_message(['text' => $text]);
-                });
-
-                error_log('[WP Bedrock] Stream completed');
-                $this->send_sse_message(['done' => true]);
-                // Clean up any remaining output buffers before exit
-                while (ob_get_level() > 0) {
-                    ob_end_flush();
-                }
                 exit;
             } else {
                 $response = $bedrock->invoke_model($requestBody, $model_id);
-                error_log('[WP Bedrock] Response: ' . print_r($response, true));
-                
-                // Extract content from response based on model type
-                $content = '';
-                if (strpos($model_id, 'anthropic.claude') !== false) {
-                    // Claude format
-                    $content = $response['content'][0]['text'] ?? '';
-                } elseif (strpos($model_id, 'mistral.mistral') !== false) {
-                    // Mistral format
-                    $content = $response['choices'][0]['message']['content'] ?? '';
-                } elseif (strpos($model_id, 'amazon.nova') !== false) {
-                    // Nova format
-                    $content = $response['results'][0]['outputText'] ?? '';
-                }
-                error_log('[WP Bedrock] Response: ' . print_r( $content, true));
-
+                $content = $this->extract_response_content($response, $model_id);
                 wp_send_json_success(['content' => $content]);
             }
         } catch (Exception $e) {
+            error_log('[WP Bedrock] Error: ' . $e->getMessage());
+            
+            // Initialize streaming flag
+            $enable_stream = get_option('wpbedrock_enable_stream', '1') === '1';
+            $is_stream = $enable_stream && isset($request_data['stream']) && $request_data['stream'] === '1';
+            
             if ($is_stream) {
-                error_log('[WP Bedrock] Stream error: ' . $e->getMessage());
                 $this->send_sse_message(['error' => $e->getMessage()]);
-                // Clean up any remaining output buffers before exit
                 while (ob_get_level() > 0) {
                     ob_end_flush();
                 }
@@ -1037,6 +976,7 @@ class WP_Bedrock_Admin {
             }
         }
     }
+
 
     /**
      * Handle image generation request

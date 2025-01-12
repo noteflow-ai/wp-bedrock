@@ -3,7 +3,7 @@
  * The plugin bootstrap file
  *
  * @wordpress-plugin
- * Plugin Name:       Bedrock AI Agent
+ * Plugin Name:       AI Chat for Amazon Bedrock
  * Description:       WordPress plugin for Amazon Bedrock AI integration with conversation support
  * Version:          1.0.0
  * Author:           glay
@@ -32,7 +32,7 @@ if (file_exists($composer_autoload)) {
 // Check if AWS SDK is available
 if (!class_exists('Aws\Sdk')) {
     function wpbedrock_admin_notice_aws_sdk_missing() {
-        $message = __('WP Bedrock requires AWS SDK PHP. Please run composer install in the plugin directory.', 'bedrock-ai-chat');
+        $message = __('AI Chat for Amazon Bedrock requires AWS SDK PHP. Please run composer install in the plugin directory.', 'bedrock-ai-chat');
         printf('<div class="notice notice-error"><p>%s</p></div>', esc_html($message));
     }
     add_action('admin_notices', 'wpbedrock_admin_notice_aws_sdk_missing');
@@ -53,7 +53,7 @@ function activate_wp_bedrock() {
         require_once WPBEDROCK_PLUGIN_DIR . 'includes/class-wp-bedrock-activator.php';
         WPBEDROCK\WP_Bedrock_Activator::activate();
     } catch (\Exception $e) {
-        error_log('WP Bedrock activation error: ' . $e->getMessage());
+        error_log('AI Chat for Amazon Bedrock activation error: ' . $e->getMessage());
     }
     ob_end_clean();
 }

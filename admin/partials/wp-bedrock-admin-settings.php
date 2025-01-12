@@ -2,7 +2,7 @@
 if (!defined('ABSPATH')) exit;
 ?>
 <div class="wrap">
-    <h1>WP Bedrock Settings</h1>
+    <h1>AI Chat for Amazon Bedrock Settings</h1>
     <form method="post" action="options.php">
         <?php
         settings_fields('wp-bedrock_settings');

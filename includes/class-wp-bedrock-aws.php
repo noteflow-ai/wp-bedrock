@@ -23,7 +23,7 @@ class WP_Bedrock_AWS {
      */
     private function log_debug($message, $data = null) {
         if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
-            $log_message = '[WP Bedrock] ' . $message;
+            $log_message = '[AI Chat for Amazon Bedrock] ' . $message;
             if ($data !== null) {
                 $log_message .= ' ' . (is_string($data) ? $data : json_encode($data));
             }
@@ -34,8 +34,14 @@ class WP_Bedrock_AWS {
     /**
      * Initialize AWS Bedrock client
      */
-    public function __construct($key, $secret, $region = 'us-west-2', $max_retries = 3, $retry_delay = 1) {
+    public function __construct($key, $secret, $region = null, $max_retries = 3, $retry_delay = 1) {
         $credentials = new Credentials($key, $secret);
+        
+        // Use provided region or get from settings
+        $region = $region ?: get_option('wpbedrock_aws_region');
+        if (empty($region)) {
+            throw new Exception('AWS region not configured. Please set the region in plugin settings.');
+        }
         
         $this->client = new BedrockRuntimeClient([
             'version' => 'latest',
@@ -80,10 +86,16 @@ class WP_Bedrock_AWS {
      */
     public function invoke_model($request_body, $model_id, $stream = false, $callback = null) {
         try {
+            // Ensure request body is properly formatted for Claude models
+            if (strpos($model_id, 'anthropic.claude') !== false) {
+                $request_body['anthropic_version'] = 'bedrock-2023-05-31';
+            }
+
             $params = [
                 'body' => json_encode($request_body),
                 'contentType' => 'application/json',
-                'modelId' => $model_id
+                'modelId' => $model_id,
+                'accept' => 'application/json'
             ];
 
             $this->log_debug('Request:', [
@@ -139,6 +151,14 @@ class WP_Bedrock_AWS {
                 
                 if ($result === null && json_last_error() !== JSON_ERROR_NONE) {
                     throw new Exception('Failed to decode response: ' . json_last_error_msg());
+                }
+
+                // Extract output text from Nova response
+                if (strpos($model_id, 'us.amazon.nova') !== false) {
+                    if (!isset($result['output_text'])) {
+                        throw new Exception('Invalid Nova model response: missing output_text');
+                    }
+                    return ['content' => [['text' => $result['output_text']]]];
                 }
 
                 return $result;

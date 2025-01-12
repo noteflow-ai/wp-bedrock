@@ -16,12 +16,12 @@ if (!defined('WPINC')) {
 ?>
 
 <div class="wrap">
-    <h1>WP Bedrock</h1>
+    <h1>AI Chat for Amazon Bedrock</h1>
     
     <div class="card">
-        <h2><?php _e('About WP Bedrock', 'wp-bedrock'); ?></h2>
+        <h2><?php _e('About AI Chat for Amazon Bedrock', 'wp-bedrock'); ?></h2>
         <p>
-            <?php _e('WP Bedrock is a powerful WordPress plugin that integrates Amazon Bedrock AI capabilities into your WordPress site. It provides an intelligent chatbot that can assist your visitors with questions and information.', 'wp-bedrock'); ?>
+            <?php _e('AI Chat for Amazon Bedrock is a powerful WordPress plugin that integrates Amazon Bedrock AI capabilities into your WordPress site. It provides an intelligent chatbot that can assist your visitors with questions and information.', 'wp-bedrock'); ?>
         </p>
     </div>
 
@@ -77,7 +77,7 @@ if (!defined('WPINC')) {
             <?php _e('For support and detailed documentation, please visit:', 'wp-bedrock'); ?>
             <ul style="list-style: disc; margin-left: 20px;">
                 <li><a href="https://github.com/noteflow-ai/wp-bedrock" target="_blank"><?php _e('GitHub Repository', 'wp-bedrock'); ?></a></li>
-                <li><a href="https://wordpress.org/plugins/wp-bedrock" target="_blank"><?php _e('WordPress Plugin Page', 'wp-bedrock'); ?></a></li>
+                <li><a href="https://wordpress.org/plugins/ai-chat-for-amazon-bedrock" target="_blank"><?php _e('WordPress Plugin Page', 'wp-bedrock'); ?></a></li>
             </ul>
         </p>
     </div>

@@ -23,7 +23,7 @@
                 <button class="wp-bedrock-button" data-action="example">点击我</button>
             </div>
             <div class="wp-bedrock-widget-footer">
-                <small>Powered by WP Bedrock</small>
+                <small>Powered by AI Chat for Amazon Bedrock</small>
             </div>
         </div>
     </div>

@@ -76,19 +76,19 @@ if (!defined('ABSPATH')) exit;
                                         try {
                                             $tools_json_path = plugin_dir_path(dirname(__FILE__)) . '../includes/tools.json';
                                             if (!file_exists($tools_json_path)) {
-                                                error_log('[WP Bedrock] tools.json not found at: ' . $tools_json_path);
+                                                error_log('[AI Chat for Amazon Bedrock] tools.json not found at: ' . $tools_json_path);
                                                 throw new Exception('Tools configuration file not found');
                                             }
                                             
                                             $tools_json = file_get_contents($tools_json_path);
                                             if ($tools_json === false) {
-                                                error_log('[WP Bedrock] Failed to read tools.json');
+                                                error_log('[AI Chat for Amazon Bedrock] Failed to read tools.json');
                                                 throw new Exception('Failed to read tools configuration');
                                             }
                                             
                                             $tools = json_decode($tools_json, true);
                                             if (json_last_error() !== JSON_ERROR_NONE) {
-                                                error_log('[WP Bedrock] Invalid JSON in tools.json: ' . json_last_error_msg());
+                                                error_log('[AI Chat for Amazon Bedrock] Invalid JSON in tools.json: ' . json_last_error_msg());
                                                 throw new Exception('Invalid tools configuration format');
                                             }
                                             
@@ -111,7 +111,7 @@ if (!defined('ABSPATH')) exit;
                                                 }
                                             }
                                         } catch (Exception $e) {
-                                            error_log('[WP Bedrock] Error loading tools: ' . $e->getMessage());
+                                            error_log('[AI Chat for Amazon Bedrock] Error loading tools: ' . $e->getMessage());
                                             echo '<!-- Tools loading error: ' . esc_html($e->getMessage()) . ' -->';
                                         }
                                         ?>

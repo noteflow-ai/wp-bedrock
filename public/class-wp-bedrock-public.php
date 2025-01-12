@@ -99,7 +99,7 @@ class WP_Bedrock_Public {
         // 合并默认属性
         $atts = shortcode_atts(
             array(
-                'title' => 'WP Bedrock',
+                'title' => 'AI Chat for Amazon Bedrock',
             ),
             $atts,
             'wp_bedrock'
