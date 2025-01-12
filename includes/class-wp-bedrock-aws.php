@@ -379,6 +379,14 @@ class WP_Bedrock_AWS {
                     throw new Exception('Failed to decode response: ' . json_last_error_msg());
                 }
 
+                // Log non-streaming response for debugging
+                $this->log_debug('Non-streaming response:', json_encode($result, JSON_PRETTY_PRINT));
+
+                // Check for tool calls in response
+                if (isset($result['tool_calls'])) {
+                    $this->log_debug('Tool calls found in non-streaming response:', json_encode($result['tool_calls'], JSON_PRETTY_PRINT));
+                }
+
                 // Extract output text from Nova response
                 if (strpos($model_id, 'us.amazon.nova') !== false) {
                     if (!isset($result['output_text'])) {

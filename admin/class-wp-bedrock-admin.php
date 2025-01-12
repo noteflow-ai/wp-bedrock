@@ -212,11 +212,53 @@ class WP_Bedrock_Admin {
             wp_add_inline_script('highlight-js', 'console.log("[AI Chat for Amazon Bedrock] highlight.js loaded");', 'after');
             wp_add_inline_script('markdown-it', 'console.log("[AI Chat for Amazon Bedrock] markdown-it loaded");', 'after');
 
+            // Register API and handler scripts
+            wp_register_script(
+                $this->plugin_name . '-api',
+                plugin_dir_url(__FILE__) . 'js/wp-bedrock-api.js',
+                array('jquery'),
+                $this->version,
+                true
+            );
+
+            wp_register_script(
+                $this->plugin_name . '-tool-handler',
+                plugin_dir_url(__FILE__) . 'js/wp-bedrock-tool-handler.js',
+                array('jquery', $this->plugin_name . '-api'),
+                $this->version,
+                true
+            );
+
+            wp_register_script(
+                $this->plugin_name . '-response-handler',
+                plugin_dir_url(__FILE__) . 'js/wp-bedrock-response-handler.js',
+                array('jquery', $this->plugin_name . '-api', $this->plugin_name . '-tool-handler'),
+                $this->version,
+                true
+            );
+
+            wp_register_script(
+                $this->plugin_name . '-chat-manager',
+                plugin_dir_url(__FILE__) . 'js/wp-bedrock-chat-manager.js',
+                array('jquery', $this->plugin_name . '-api', $this->plugin_name . '-tool-handler', $this->plugin_name . '-response-handler'),
+                $this->version,
+                true
+            );
+
             // Load chatbot script with all dependencies and unique version
             wp_enqueue_script(
                 $this->plugin_name . '-chatbot',
                 plugin_dir_url(__FILE__) . 'js/wp-bedrock-chatbot.js',
-                array('jquery', 'jquery-ui-dialog', 'highlight-js', 'markdown-it'),
+                array(
+                    'jquery',
+                    'jquery-ui-dialog',
+                    'highlight-js',
+                    'markdown-it',
+                    $this->plugin_name . '-api',
+                    $this->plugin_name . '-tool-handler',
+                    $this->plugin_name . '-response-handler',
+                    $this->plugin_name . '-chat-manager'
+                ),
                 $this->version . '.' . time(), // Add timestamp to prevent caching
                 true
             );
@@ -849,7 +891,7 @@ class WP_Bedrock_Admin {
             }
 
             // Log raw request for debugging
-            error_log('[WP Bedrock] Raw request body: ' . $_POST['requestBody']);
+            // error_log('[WP Bedrock] Raw request body: ' . $_POST['requestBody']);
 
             // WordPress automatically adds slashes, so we need to remove them
             $requestBody = json_decode(stripslashes($_POST['requestBody']), true);
