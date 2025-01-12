@@ -20,20 +20,10 @@ const formatContentItem = (item) => {
         // Handle image content
         if (item.image_url?.url) {
             const url = item.image_url.url;
-            const colonIndex = url.indexOf(":");
-            const semicolonIndex = url.indexOf(";");
-            const comma = url.indexOf(",");
-
-            if (colonIndex >= 0 && semicolonIndex >= 0 && comma >= 0) {
-                const mimeType = url.slice(colonIndex + 1, semicolonIndex);
-                const format = mimeType.split("/")[1];
-                const data = url.slice(comma + 1);
-
-                if (!format || !data) {
-                    console.warn('[BedrockAPI] Invalid image data format');
-                    return null;
-                }
-
+            if (url.startsWith('data:')) {
+                const [header, data] = url.split(',');
+                const [_, mimeType] = header.split(':')[1].split(';');
+                
                 return {
                     type: "image",
                     source: {
@@ -42,9 +32,15 @@ const formatContentItem = (item) => {
                         data: data
                     }
                 };
+            } else {
+                return {
+                    type: "image",
+                    source: {
+                        type: "url",
+                        url: url
+                    }
+                };
             }
-            console.warn('[BedrockAPI] Invalid image URL format');
-            return null;
         }
 
         console.warn('[BedrockAPI] Unknown content item type');
@@ -90,15 +86,16 @@ const ClaudeMapper = {
 
 const formatClaudeRequest = (messages, modelConfig, tools) => {
     // Convert messages to Claude format and handle role mapping
-    let formattedMessages = messages.map(message => ({
-        role: ClaudeMapper[message.role] || "user",
-        content: Array.isArray(message.content)
-            ? message.content.map(item => {
-                const formatted = formatContentItem(item);
-                return formatted?.text || "";
-              }).join("\n")
-            : message.content
-    }));
+    let formattedMessages = messages.map(message => {
+        const content = Array.isArray(message.content) 
+            ? message.content.map(item => formatContentItem(item)).filter(Boolean)
+            : [formatContentItem(message.content)].filter(Boolean);
+
+        return {
+            role: ClaudeMapper[message.role] || "user",
+            content: content
+        };
+    });
 
     // Insert semicolon placeholder between consecutive user messages
     for (let i = 0; i < formattedMessages.length - 1; i++) {
@@ -550,14 +547,16 @@ function initChatbot() {
         scrollToBottom();
 
         // Format message content for storage
-        let messageContent;
+        let messageContent = [{ type: "text", text: content }];
         if (imageUrl) {
-            messageContent = [
-                { type: "text", text: content },
-                { image_url: { url: imageUrl } }
-            ];
-        } else {
-            messageContent = [{ type: "text", text: content }];
+            messageContent.push({ 
+                type: "image",
+                source: {
+                    type: "base64",
+                    media_type: imageUrl.split(';')[0].split(':')[1],
+                    data: imageUrl.split(',')[1]
+                }
+            });
         }
 
         const historyEntry = {
@@ -620,7 +619,7 @@ function initChatbot() {
             const content = msg.content
                 .map(item => {
                     if (item.type === "text") return item.text;
-                    if (item.image_url) return "[Image]";
+                    if (item.type === "image") return "[Image]";
                     return "";
                 })
                 .filter(Boolean)
@@ -826,8 +825,11 @@ function initChatbot() {
                 messageContent = [
                     { type: "text", text: message },
                     { 
-                        image_url: { 
-                            url: imageUrl 
+                        type: "image",
+                        source: {
+                            type: "base64",
+                            media_type: imageUrl.split(';')[0].split(':')[1],
+                            data: imageUrl.split(',')[1]
                         }
                     }
                 ];

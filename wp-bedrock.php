@@ -29,16 +29,6 @@ if (file_exists($composer_autoload)) {
     require_once $composer_autoload;
 }
 
-// Check if AWS SDK is available
-if (!class_exists('Aws\Sdk')) {
-    function wpbedrock_admin_notice_aws_sdk_missing() {
-        $message = __('AI Chat for Amazon Bedrock requires AWS SDK PHP. Please run composer install in the plugin directory.', 'bedrock-ai-chat');
-        printf('<div class="notice notice-error"><p>%s</p></div>', esc_html($message));
-    }
-    add_action('admin_notices', 'wpbedrock_admin_notice_aws_sdk_missing');
-    return;
-}
-
 // Load AWS Bedrock client if not exists
 if (!class_exists('\\WPBEDROCK\\WP_Bedrock_AWS')) {
     require_once WPBEDROCK_PLUGIN_DIR . 'includes/class-wp-bedrock-aws.php';
