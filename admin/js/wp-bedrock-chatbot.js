@@ -1,332 +1,32 @@
-// Message formatters
-const formatContentItem = (item) => {
-    try {
-        // Handle string input
-        if (typeof item === "string") {
-            return { type: "text", text: item };
-        }
-
-        // Handle null/undefined
-        if (!item) {
-            console.warn('[BedrockAPI] Received null/undefined content item');
-            return null;
-        }
-
-        // Handle text content
-        if (item.text || item.type === "text") {
-            return { type: "text", text: item.text || item.content || "" };
-        }
-
-        // Handle image content
-        if (item.image_url?.url) {
-            const url = item.image_url.url;
-            if (url.startsWith('data:')) {
-                const [header, data] = url.split(',');
-                const [_, mimeType] = header.split(':')[1].split(';');
-                
-                return {
-                    type: "image",
-                    source: {
-                        type: "base64",
-                        media_type: mimeType,
-                        data: data
-                    }
-                };
-            } else {
-                return {
-                    type: "image",
-                    source: {
-                        type: "url",
-                        url: url
-                    }
-                };
-            }
-        }
-
-        console.warn('[BedrockAPI] Unknown content item type');
-        return null;
-    } catch (error) {
-        console.error('[BedrockAPI] Error formatting content item:', error);
-        return null;
-    }
-};
-
-const formatRequestBody = (messages, modelConfig, tools = []) => {
-    if (!Array.isArray(messages)) {
-        throw new Error('Invalid messages format');
-    }
-
-    if (!modelConfig?.model) {
-        throw new Error('Model ID is required');
-    }
-
-    const model = modelConfig.model;
-
-    // Format messages based on model type
-    if (model.includes("anthropic.claude")) {
-        return formatClaudeRequest(messages, modelConfig, tools);
-    } else if (model.includes("us.amazon.nova")) {
-        return formatNovaRequest(messages, modelConfig, tools);
-    } else if (model.startsWith("amazon.titan")) {
-        return formatTitanRequest(messages, modelConfig);
-    } else if (model.includes("meta.llama")) {
-        return formatLlamaRequest(messages, modelConfig);
-    } else if (model.includes("mistral.mistral")) {
-        return formatMistralRequest(messages, modelConfig, tools);
-    }
-
-    throw new Error(`Unsupported model: ${model}`);
-};
-
-const ClaudeMapper = {
-    system: "user",
-    user: "user",
-    assistant: "assistant"
-};
-
-const formatClaudeRequest = (messages, modelConfig, tools) => {
-    // Convert messages to Claude format and handle role mapping
-    let formattedMessages = messages.map(message => {
-        const content = Array.isArray(message.content) 
-            ? message.content.map(item => formatContentItem(item)).filter(Boolean)
-            : [formatContentItem(message.content)].filter(Boolean);
-
-        return {
-            role: ClaudeMapper[message.role] || "user",
-            content: content
-        };
+// Load BedrockAPI script
+function loadBedrockAPI() {
+    return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = `${wpbedrock_chat.plugin_url}js/wp-bedrock-api.js`;
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.appendChild(script);
     });
+}
 
-    // Insert semicolon placeholder between consecutive user messages
-    for (let i = 0; i < formattedMessages.length - 1; i++) {
-        const message = formattedMessages[i];
-        const nextMessage = formattedMessages[i + 1];
-        
-        if (message.role === "user" && nextMessage.role === "user") {
-            formattedMessages.splice(i + 1, 0, {
-                role: "assistant",
-                content: ";"
-            });
-            i++; // Skip the inserted message
-        }
-    }
-
-    // Ensure first message is from user
-    if (formattedMessages[0]?.role === "assistant") {
-        formattedMessages.unshift({
-            role: "user",
-            content: ";"
-        });
-    }
-
-    // Add system prompt as a user message if present
-    if (modelConfig.system_prompt) {
-        formattedMessages.unshift({
-            role: "user",
-            content: modelConfig.system_prompt
-        });
-    }
-
-    const requestBody = {
-        messages: formattedMessages,
-        max_tokens: modelConfig.max_tokens || 2000,
-        temperature: modelConfig.temperature || 0.7,
-        top_p: modelConfig.top_p || 0.9
-    };
-
-    if (tools && tools.length > 0) {
-        requestBody.tools = tools.map(tool => {
-            const params = tool?.function?.parameters || {};
-            return {
-                name: tool?.function?.name || "",
-                description: tool?.function?.description || "",
-                parameters: {
-                    type: "object",
-                    properties: params.properties || {},
-                    required: params.required || []
-                }
-            };
-        });
-    }
-
-    return requestBody;
-};
-
-const formatNovaRequest = (messages, modelConfig, tools) => {
-    try {
-        const systemMessage = messages.find(m => m.role === "system");
-        const conversationMessages = messages.filter(m => m.role !== "system");
-
-        // Ensure all text content is properly stringified
-        const formatTextContent = (content) => {
-            if (Array.isArray(content)) {
-                return content.map(item => {
-                    const formatted = formatContentItem(item);
-                    return formatted?.text || "";
-                }).join("\n");
-            }
-            return String(content || "");
-        };
-
-        const requestBody = {
-            messages: conversationMessages.map(message => ({
-                role: String(message.role),
-                content: Array.isArray(message.content)
-                    ? message.content.map(item => {
-                        const formatted = formatContentItem(item);
-                        if (!formatted) return null;
-
-                        if (formatted.type === "text") {
-                            return { text: String(formatted.text) };
-                        } else if (formatted.type === "image") {
-                            return { 
-                                image: formatted.source
-                            };
-                        }
-                        return null;
-                    }).filter(Boolean)
-                    : [{ text: String(message.content) }]
-            })),
-            temperature: Number(modelConfig.temperature || 0.7),
-            top_k: Number(modelConfig.top_k || 50),
-            max_tokens: Number(modelConfig.max_tokens || 1000),
-            stop_sequences: Array.isArray(modelConfig.stop) ? modelConfig.stop : []
-        };
-
-        if (systemMessage) {
-            requestBody.system = [{
-                text: formatTextContent(systemMessage.content)
-            }];
-        }
-
-        // Simplify tool configuration
-        if (Array.isArray(tools) && tools.length > 0) {
-            requestBody.toolConfig = {
-                tools: tools.map(tool => ({
-                    toolSpec: {
-                        name: String(tool?.function?.name || ""),
-                        description: String(tool?.function?.description || ""),
-                        inputSchema: {
-                            json: JSON.stringify(tool?.function?.parameters || {})
-                        }
-                    }
-                })),
-                toolChoice: { auto: {} }
-            };
-        }
-
-        // Validate the request body can be properly serialized
-        JSON.parse(JSON.stringify(requestBody));
-        
-        return requestBody;
-    } catch (error) {
-        console.error('[BedrockAPI] Error formatting Nova request:', error);
-        throw new Error('Failed to format Nova request: ' + error.message);
-    }
-};
-
-const formatTitanRequest = (messages, modelConfig) => {
-    const inputText = messages
-        .map(message => {
-            const content = Array.isArray(message.content)
-                ? message.content.map(item => {
-                    const formatted = formatContentItem(item);
-                    return formatted?.text || "";
-                }).join("\n")
-                : message.content;
-            return `${message.role}: ${content}`;
-        })
-        .join("\n\n");
-
-    return {
-        inputText,
-        textGenerationConfig: {
-            maxTokenCount: modelConfig.max_tokens || 4096,
-            temperature: modelConfig.temperature || 0.7,
-            stopSequences: modelConfig.stop || []
-        }
-    };
-};
-
-const formatLlamaRequest = (messages, modelConfig) => {
-    let prompt = "<|begin_of_text|>";
-    
-    const systemMessage = messages.find(m => m.role === "system");
-    if (systemMessage) {
-        const content = Array.isArray(systemMessage.content)
-            ? systemMessage.content.map(item => {
-                const formatted = formatContentItem(item);
-                return formatted?.text || "";
-            }).join("\n")
-            : systemMessage.content;
-        prompt += `<|start_header_id|>system<|end_header_id|>\n${content}<|eot_id|>`;
-    }
-
-    const conversationMessages = messages.filter(m => m.role !== "system");
-    for (const message of conversationMessages) {
-        const role = message.role === "assistant" ? "assistant" : "user";
-        const content = Array.isArray(message.content)
-            ? message.content.map(item => {
-                const formatted = formatContentItem(item);
-                return formatted?.text || "";
-            }).join("\n")
-            : message.content;
-        prompt += `<|start_header_id|>${role}<|end_header_id|>\n${content}<|eot_id|>`;
-    }
-
-    prompt += "<|start_header_id|>assistant<|end_header_id|>";
-
-    return {
-        prompt,
-        max_gen_len: modelConfig.max_tokens || 512,
-        temperature: modelConfig.temperature || 0.7,
-        top_p: modelConfig.top_p || 0.9
-    };
-};
-
-const formatMistralRequest = (messages, modelConfig, tools) => {
-    const formattedMessages = messages.map(message => ({
-        role: message.role === "system" ? "system" :
-              message.role === "assistant" ? "assistant" : "user",
-        content: Array.isArray(message.content)
-            ? message.content.map(item => {
-                const formatted = formatContentItem(item);
-                return formatted?.text || "";
-            }).join("\n")
-            : message.content
-    }));
-
-    const requestBody = {
-        messages: formattedMessages,
-        max_tokens: modelConfig.max_tokens || 4096,
-        temperature: modelConfig.temperature || 0.7,
-        top_p: modelConfig.top_p || 0.9
-    };
-
-    if (tools.length > 0) {
-        requestBody.tool_choice = "auto";
-        requestBody.tools = tools.map(tool => ({
-            type: "function",
-            function: {
-                name: tool?.function?.name,
-                description: tool?.function?.description,
-                parameters: tool?.function?.parameters
-            }
-        }));
-    }
-
-    return requestBody;
-};
-
-function initChatbot() {
+async function initChatbot() {
     // Check for all required dependencies
     const requiredDeps = {
         'jQuery': () => typeof jQuery !== 'undefined',
         'wpbedrock_chat': () => typeof wpbedrock_chat !== 'undefined',
         'markdownit': () => typeof window.markdownit !== 'undefined',
         'hljs': () => typeof window.hljs !== 'undefined',
-        'jQuery UI Dialog': () => typeof jQuery !== 'undefined' && typeof jQuery.fn.dialog !== 'undefined'
+        'jQuery UI Dialog': () => typeof jQuery !== 'undefined' && typeof jQuery.fn.dialog !== 'undefined',
+        'BedrockAPI': () => typeof window.BedrockAPI !== 'undefined'
     };
+
+    // Load BedrockAPI if not already loaded
+    try {
+        await loadBedrockAPI();
+    } catch (error) {
+        console.error('[AI Chat for Amazon Bedrock] Failed to load BedrockAPI:', error);
+        return;
+    }
 
     // Add timeout tracking
     window.wpBedrockInitAttempts = (window.wpBedrockInitAttempts || 0) + 1;
@@ -343,7 +43,7 @@ function initChatbot() {
             setTimeout(initChatbot, 100);
             return;
         } else {
-            console.error('[AI Chat for Amazon Bedrock] Failed to load required libraries after 10 seconds:', missing.join(', '));
+            console.error('[AI Chat for Amazon Bedrock] Failed to load required libraries:', missing.join(', '));
             const container = document.querySelector('.chat-container');
             if (container) {
                 container.innerHTML = `
@@ -546,17 +246,15 @@ function initChatbot() {
         elements.messagesContainer.append(messageDiv);
         scrollToBottom();
 
-        // Format message content for storage
-        let messageContent = [{ type: "text", text: content }];
+        // Format message content for storage using BedrockAPI
+        let messageContent = [BedrockAPI.formatContentItem(content)];
         if (imageUrl) {
-            messageContent.push({ 
-                type: "image",
-                source: {
-                    type: "base64",
-                    media_type: imageUrl.split(';')[0].split(':')[1],
-                    data: imageUrl.split(',')[1]
-                }
+            const imageContent = BedrockAPI.formatContentItem({ 
+                image_url: { url: imageUrl }
             });
+            if (imageContent) {
+                messageContent.push(imageContent);
+            }
         }
 
         const historyEntry = {
@@ -810,7 +508,7 @@ function initChatbot() {
         }
 
         try {
-            // Format request using formatRequestBody
+            // Format request using BedrockAPI
             const modelConfig = {
                 model: wpbedrock_chat.default_model,
                 temperature: parseFloat(wpbedrock_chat.temperature) || 0.7,
@@ -819,25 +517,20 @@ function initChatbot() {
                 system_prompt: wpbedrock_chat.default_system_prompt
             };
 
-            // Prepare message content
+            // Prepare message content using BedrockAPI
             let messageContent;
             if (imageUrl) {
                 messageContent = [
-                    { type: "text", text: message },
-                    { 
-                        type: "image",
-                        source: {
-                            type: "base64",
-                            media_type: imageUrl.split(';')[0].split(':')[1],
-                            data: imageUrl.split(',')[1]
-                        }
-                    }
-                ];
+                    BedrockAPI.formatContentItem(message),
+                    BedrockAPI.formatContentItem({ 
+                        image_url: { url: imageUrl }
+                    })
+                ].filter(Boolean);
             } else {
-                messageContent = [{ type: "text", text: message }];
+                messageContent = [BedrockAPI.formatContentItem(message)].filter(Boolean);
             }
 
-            const requestBody = formatRequestBody(
+            const requestBody = BedrockAPI.formatRequestBody(
                 [...previousMessages, {
                     role: 'user',
                     content: messageContent
