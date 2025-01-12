@@ -20,7 +20,6 @@ class BedrockChatManager {
 
         // Initialize handlers
         this.api = new BedrockAPI();
-        this.toolHandler = new BedrockToolHandler();
         this.responseHandler = new BedrockResponseHandler();
 
         // Set up response handler callbacks
@@ -58,6 +57,8 @@ class BedrockChatManager {
                 role: 'assistant',
                 content: [{ type: 'text', text: this.config.initial_message }]
             });
+            // Update message count immediately after adding initial message
+            this.updateMessageCount();
         }
 
         // Set placeholder
@@ -65,8 +66,6 @@ class BedrockChatManager {
             this.elements.messageInput.attr('placeholder', this.config.placeholder);
         }
 
-        // Update message count
-        this.updateMessageCount();
     }
 
     // Create message element
@@ -190,6 +189,13 @@ class BedrockChatManager {
         // Return if no content to send
         if (!messageText && !imagePreview) return;
 
+        // Ensure model is set
+        if (!this.config.default_model) {
+            console.error('[BedrockChatManager] No model configured');
+            this.handleError('No model configured. Please check your settings.');
+            return;
+        }
+
         try {
             // Clear input
             this.elements.messageInput.val('');
@@ -236,9 +242,13 @@ class BedrockChatManager {
                     model: this.config.default_model,
                     temperature: Number(this.config.default_temperature || 0.7),
                     system_prompt: this.config.default_system_prompt
-                },
-                this.selectedTools
+                }
             );
+
+            // Only add tools to request if there are selected tools
+            if (this.selectedTools && this.selectedTools.length > 0) {
+                requestBody.tools = [...this.selectedTools];
+            }
 
             // Send request
             if (this.config.enable_stream) {
@@ -274,7 +284,8 @@ class BedrockChatManager {
 
             this.scrollToBottom();
         } catch (error) {
-            this.handleError(error);
+            console.error('[BedrockChatManager] Error processing message:', error);
+            this.handleError(typeof error === 'string' ? error : error.message || 'An error occurred while processing the message');
         }
     }
 
@@ -296,13 +307,23 @@ class BedrockChatManager {
     // Update message count
     updateMessageCount() {
         const count = this.messageHistory.length;
-        this.elements.messageCountDisplay.text(count);
+        this.elements.messageCountDisplay.text(`${count} messages`);
     }
 
     // Scroll to bottom
     scrollToBottom() {
         const container = this.elements.messagesContainer[0];
         container.scrollTop = container.scrollHeight;
+    }
+
+    // Toggle tool selection
+    toggleTool(toolDefinition) {
+        const index = this.selectedTools.findIndex(t => t.function.name === toolDefinition.function.name);
+        if (index === -1) {
+            this.selectedTools.push(toolDefinition);
+        } else {
+            this.selectedTools.splice(index, 1);
+        }
     }
 }
 

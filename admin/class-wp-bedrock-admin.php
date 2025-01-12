@@ -46,6 +46,8 @@ class WP_Bedrock_Admin {
         add_action('admin_init', array($this, 'register_settings'));
         add_action('wp_ajax_wpbedrock_chat_message', array($this, 'handle_chat_message'));
         add_action('wp_ajax_nopriv_wpbedrock_chat_message', array($this, 'handle_chat_message'));
+        add_action('wp_ajax_wpbedrock_tool_call', array($this, 'handle_tool_call'));
+        add_action('wp_ajax_nopriv_wpbedrock_tool_call', array($this, 'handle_tool_call'));
         add_action('wp_ajax_wpbedrock_generate_image', array($this, 'handle_image_generation'));
         add_action('wp_ajax_nopriv_wpbedrock_generate_image', array($this, 'handle_image_generation'));
         add_action('wp_ajax_wpbedrock_upscale_image', array($this, 'handle_image_upscale'));
@@ -222,17 +224,9 @@ class WP_Bedrock_Admin {
             );
 
             wp_register_script(
-                $this->plugin_name . '-tool-handler',
-                plugin_dir_url(__FILE__) . 'js/wp-bedrock-tool-handler.js',
-                array('jquery', $this->plugin_name . '-api'),
-                $this->version,
-                true
-            );
-
-            wp_register_script(
                 $this->plugin_name . '-response-handler',
                 plugin_dir_url(__FILE__) . 'js/wp-bedrock-response-handler.js',
-                array('jquery', $this->plugin_name . '-api', $this->plugin_name . '-tool-handler'),
+                array('jquery', $this->plugin_name . '-api'),
                 $this->version,
                 true
             );
@@ -240,7 +234,7 @@ class WP_Bedrock_Admin {
             wp_register_script(
                 $this->plugin_name . '-chat-manager',
                 plugin_dir_url(__FILE__) . 'js/wp-bedrock-chat-manager.js',
-                array('jquery', $this->plugin_name . '-api', $this->plugin_name . '-tool-handler', $this->plugin_name . '-response-handler'),
+                array('jquery', $this->plugin_name . '-api', $this->plugin_name . '-response-handler'),
                 $this->version,
                 true
             );
@@ -255,7 +249,6 @@ class WP_Bedrock_Admin {
                     'highlight-js',
                     'markdown-it',
                     $this->plugin_name . '-api',
-                    $this->plugin_name . '-tool-handler',
                     $this->plugin_name . '-response-handler',
                     $this->plugin_name . '-chat-manager'
                 ),
@@ -514,8 +507,111 @@ class WP_Bedrock_Admin {
             );
             settings_errors('wpbedrock_messages');
         }
+
+        
+
+        // Get existing chat configuration
+        $chat_config = array(
+            'ajaxurl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('wpbedrock_chat_nonce'),
+            'initial_message' => get_option('wpbedrock_chat_initial_message', 'Hello! How can I help you today?'),
+            'placeholder' => get_option('wpbedrock_chat_placeholder', 'Type your message here...'),
+            'enable_stream' => get_option('wpbedrock_enable_stream', '1') === '1',
+            'context_length' => intval(get_option('wpbedrock_context_length', '4')),
+            'default_model' => get_option('wpbedrock_model_id', 'anthropic.claude-3-haiku-20240307-v1:0'),
+            'default_temperature' => floatval(get_option('wpbedrock_temperature', '0.7')),
+            'default_system_prompt' => get_option('wpbedrock_system_prompt', 'You are a helpful AI assistant. Respond to user queries in a clear and concise manner.'),
+            'plugin_url' => plugin_dir_url(__FILE__),
+        );
+
+        // Add chat configuration
+        wp_localize_script(
+            $this->plugin_name . '-chatbot',
+            'wpbedrock_chat',
+            $chat_config
+        );
         
         include plugin_dir_path(dirname(__FILE__)) . 'admin/partials/wp-bedrock-admin-chatbot.php';
+    }
+
+    /**
+     * Handle tool call request
+     */
+    public function handle_tool_call() {
+        try {
+            check_ajax_referer('wpbedrock_chat_nonce', 'nonce');
+
+            if (!isset($_POST['tool']) || !isset($_POST['args'])) {
+                throw new Exception('Missing required parameters');
+            }
+
+            $tool = sanitize_text_field($_POST['tool']);
+            $args = json_decode(stripslashes($_POST['args']), true);
+
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                throw new Exception('Invalid arguments format');
+            }
+
+            switch ($tool) {
+                case 'duckduckgo_search':
+                    if (!isset($args['query'])) {
+                        throw new Exception('Search query is required');
+                    }
+                    $query = urlencode($args['query']);
+                    $response = wp_remote_get("https://api.duckduckgo.com/?q={$query}&format=json");
+                    
+                    if (is_wp_error($response)) {
+                        throw new Exception('Failed to fetch search results');
+                    }
+                    
+                    $body = json_decode(wp_remote_retrieve_body($response), true);
+                    if (!$body) {
+                        throw new Exception('Invalid response from DuckDuckGo');
+                    }
+                    
+                    wp_send_json_success($body);
+                    break;
+
+                case 'arxiv_search':
+                    if (!isset($args['query'])) {
+                        throw new Exception('Search query is required');
+                    }
+                    $query = urlencode($args['query']);
+                    $max_results = isset($args['max_results']) ? min(intval($args['max_results']), 10) : 5;
+                    
+                    $response = wp_remote_get("http://export.arxiv.org/api/query?search_query=all:{$query}&start=0&max_results={$max_results}");
+                    
+                    if (is_wp_error($response)) {
+                        throw new Exception('Failed to fetch arXiv results');
+                    }
+                    
+                    $xml = simplexml_load_string(wp_remote_retrieve_body($response));
+                    if (!$xml) {
+                        throw new Exception('Invalid response from arXiv');
+                    }
+                    
+                    $results = array();
+                    foreach ($xml->entry as $entry) {
+                        $results[] = array(
+                            'title' => (string)$entry->title,
+                            'summary' => (string)$entry->summary,
+                            'authors' => array_map(function($author) {
+                                return (string)$author->name;
+                            }, $entry->author),
+                            'link' => (string)$entry->id,
+                            'published' => (string)$entry->published
+                        );
+                    }
+                    
+                    wp_send_json_success($results);
+                    break;
+
+                default:
+                    throw new Exception('Unknown tool: ' . $tool);
+            }
+        } catch (Exception $e) {
+            wp_send_json_error($e->getMessage());
+        }
     }
 
     public function display_image_page() {
@@ -913,11 +1009,14 @@ class WP_Bedrock_Admin {
                     if (strpos($model_id, 'anthropic.claude') !== false) {
                         $requestBody['tools'] = array_map(function($tool) {
                             return [
+                                'type' => 'function',
                                 'name' => $tool['function']['name'] ?? '',
                                 'description' => $tool['function']['description'] ?? '',
-                                'parameters' => $tool['function']['parameters'] ?? [],
-                                'display_height_px' => 300,
-                                'display_width_px' => 500
+                                'input_schema' => [
+                                    'type' => 'object',
+                                    'properties' => $tool['function']['parameters']['properties'] ?? [],
+                                    'required' => $tool['function']['parameters']['required'] ?? []
+                                ]
                             ];
                         }, $tools);
                     } elseif (strpos($model_id, 'us.amazon.nova') !== false) {
@@ -997,6 +1096,57 @@ class WP_Bedrock_Admin {
                 exit;
             } else {
                 $response = $bedrock->invoke_model($requestBody, $model_id);
+                
+                // Check for tool calls in the response
+                if (strpos($model_id, 'anthropic.claude') !== false && isset($response['content'])) {
+                    foreach ($response['content'] as $content) {
+                        if ($content['type'] === 'tool_calls') {
+                            $toolCalls = $content['tool_calls'];
+                            $results = array();
+                            
+                            foreach ($toolCalls as $toolCall) {
+                                try {
+                                    $result = $this->handle_tool_execution($toolCall['function']['name'], $toolCall['function']['arguments']);
+                                    $results[] = array(
+                                        'tool_call_id' => $toolCall['id'],
+                                        'content' => $result
+                                    );
+                                } catch (Exception $e) {
+                                    error_log('[WP Bedrock] Tool execution error: ' . $e->getMessage());
+                                    throw $e;
+                                }
+                            }
+                            
+                            // Create a new request with tool results
+                            $requestBody['messages'][] = array(
+                                'role' => 'assistant',
+                                'content' => array(array(
+                                    'type' => 'tool_calls',
+                                    'tool_calls' => $toolCalls
+                                ))
+                            );
+                            
+                            foreach ($results as $result) {
+                                $requestBody['messages'][] = array(
+                                    'role' => 'tool',
+                                    'content' => array(array(
+                                        'type' => 'tool_result',
+                                        'tool_call_id' => $result['tool_call_id'],
+                                        'content' => $result['content']
+                                    ))
+                                );
+                            }
+                            
+                            // Get final response with tool results
+                            $finalResponse = $bedrock->invoke_model($requestBody, $model_id);
+                            $content = $this->extract_response_content($finalResponse, $model_id);
+                            wp_send_json_success(['content' => $content]);
+                            return;
+                        }
+                    }
+                }
+                
+                // No tool calls, return normal response
                 $content = $this->extract_response_content($response, $model_id);
                 wp_send_json_success(['content' => $content]);
             }
@@ -1094,6 +1244,67 @@ class WP_Bedrock_Admin {
 
         } catch (Exception $e) {
             wp_send_json_error($e->getMessage());
+        }
+    }
+
+    /**
+     * Handle tool execution
+     */
+    private function handle_tool_execution($tool_name, $args) {
+        switch ($tool_name) {
+            case 'duckduckgo_search':
+                if (!isset($args['query'])) {
+                    throw new Exception('Search query is required');
+                }
+                $query = urlencode($args['query']);
+                $response = wp_remote_get("https://api.duckduckgo.com/?q={$query}&format=json");
+                
+                if (is_wp_error($response)) {
+                    throw new Exception('Failed to fetch search results');
+                }
+                
+                $body = json_decode(wp_remote_retrieve_body($response), true);
+                if (!$body) {
+                    throw new Exception('Invalid response from DuckDuckGo');
+                }
+                
+                return $body;
+
+            case 'arxiv_search':
+                if (!isset($args['query'])) {
+                    throw new Exception('Search query is required');
+                }
+                $query = urlencode($args['query']);
+                $max_results = isset($args['max_results']) ? min(intval($args['max_results']), 10) : 5;
+                
+                $response = wp_remote_get("http://export.arxiv.org/api/query?search_query=all:{$query}&start=0&max_results={$max_results}");
+                
+                if (is_wp_error($response)) {
+                    throw new Exception('Failed to fetch arXiv results');
+                }
+                
+                $xml = simplexml_load_string(wp_remote_retrieve_body($response));
+                if (!$xml) {
+                    throw new Exception('Invalid response from arXiv');
+                }
+                
+                $results = array();
+                foreach ($xml->entry as $entry) {
+                    $results[] = array(
+                        'title' => (string)$entry->title,
+                        'summary' => (string)$entry->summary,
+                        'authors' => array_map(function($author) {
+                            return (string)$author->name;
+                        }, $entry->author),
+                        'link' => (string)$entry->id,
+                        'published' => (string)$entry->published
+                    );
+                }
+                
+                return $results;
+
+            default:
+                throw new Exception('Unknown tool: ' . $tool_name);
         }
     }
 

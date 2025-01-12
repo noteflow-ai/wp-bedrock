@@ -33,6 +33,16 @@ class BedrockResponseHandler {
                     if (this.callbacks.onContent) {
                         this.callbacks.onContent(text);
                     }
+                } else if (decoded.type === 'tool_call') {
+                    // Tool calls are handled by the backend, just display the execution message
+                    if (this.callbacks.onContent) {
+                        this.callbacks.onContent(`Executing tool: ${decoded.name}...`);
+                    }
+                } else if (decoded.type === 'tool_result') {
+                    // Tool results are handled by the backend, just display the result
+                    if (this.callbacks.onContent) {
+                        this.callbacks.onContent(`\nTool result: ${JSON.stringify(decoded.content, null, 2)}\n\n`);
+                    }
                 }
             } else if (response.error) {
                 console.error('[BedrockResponseHandler] Stream error:', response.error);

@@ -11,7 +11,6 @@ async function initChatbot() {
         'hljs': () => typeof window.hljs !== 'undefined',
         'jQuery UI Dialog': () => typeof jQuery !== 'undefined' && typeof jQuery.fn.dialog !== 'undefined',
         'BedrockAPI': () => typeof window.BedrockAPI !== 'undefined',
-        'BedrockToolHandler': () => typeof window.BedrockToolHandler !== 'undefined',
         'BedrockResponseHandler': () => typeof window.BedrockResponseHandler !== 'undefined',
         'BedrockChatManager': () => typeof window.BedrockChatManager !== 'undefined'
     };
@@ -88,7 +87,6 @@ async function initChatbot() {
         }
     });
 
-
     // Set up event listeners with jQuery
     const setupEventListeners = ($, chatManager) => {
         // Tools modal
@@ -100,16 +98,7 @@ async function initChatbot() {
             const toolDefinition = JSON.parse($this.attr('data-tool-definition'));
             
             $this.toggleClass('selected');
-            
-            if ($this.hasClass('selected')) {
-                if (!chatManager.selectedTools.find(t => t.function.name === toolDefinition.function.name)) {
-                    chatManager.selectedTools.push(toolDefinition);
-                }
-            } else {
-                chatManager.selectedTools = chatManager.selectedTools.filter(t => 
-                    t.function.name !== toolDefinition.function.name
-                );
-            }
+            chatManager.toggleTool(toolDefinition);
         });
 
         // Message sending

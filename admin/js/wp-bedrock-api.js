@@ -53,23 +53,6 @@ class BedrockAPI {
                 }
             }
 
-            // Handle tool calls
-            if (item.tool_calls) {
-                return {
-                    type: "tool_calls",
-                    tool_calls: item.tool_calls
-                };
-            }
-
-            // Handle tool results
-            if (item.tool_call_id) {
-                return {
-                    type: "tool_result",
-                    tool_call_id: item.tool_call_id,
-                    content: item.content
-                };
-            }
-
             console.warn('[BedrockAPI] Unknown content item type:', item);
             return null;
         } catch (error) {
@@ -113,118 +96,8 @@ class BedrockAPI {
         throw new Error(`Unsupported model: ${model}`);
     }
 
-    // Extract text content from response data
-    static extractTextContent(responseData) {
-        if (!responseData) return 'No response content';
-
-        if (responseData.content !== undefined) {
-            // Handle content array format (e.g. Claude)
-            if (Array.isArray(responseData.content)) {
-                const textContent = responseData.content.find(item => item.type === 'text');
-                if (textContent) {
-                    return textContent.text;
-                }
-            } else {
-                return responseData.content;
-            }
-        } else if (responseData.message?.content) {
-            return responseData.message.content;
-        } else if (responseData.text) {
-            return responseData.text;
-        } else if (responseData.output?.message?.content?.[0]?.text) {
-            return responseData.output.message.content[0].text;
-        }
-
-        return 'No response content';
-    }
-
-    // Format tool calls from response
-    static formatToolCalls(toolUses) {
-        return toolUses.map(tool => ({
-            id: tool.id,
-            function: {
-                name: tool.name,
-                arguments: JSON.stringify(tool.input)
-            }
-        }));
-    }
-
-    // Update messages with tool results based on model
-    static updateMessagesWithToolResults(messages, toolCalls, toolResults, model) {
-        if (model.includes("anthropic.claude")) {
-            messages.push(
-                {
-                    role: "assistant",
-                    content: [{
-                        type: "tool_calls",
-                        tool_calls: toolCalls.map(tool => ({
-                            type: "function",
-                            function: {
-                                name: tool.function.name,
-                                arguments: tool.function.arguments || "{}"
-                            }
-                        }))
-                    }]
-                },
-                ...toolResults.map(result => ({
-                    role: "tool",
-                    name: result.name,
-                    content: result.content
-                }))
-            );
-        } else if (model.includes("mistral.mistral")) {
-            messages.push(
-                {
-                    role: "assistant",
-                    content: "",
-                    tool_calls: toolCalls.map(tool => ({
-                        id: tool.id,
-                        function: {
-                            name: tool.function.name,
-                            arguments: tool.function.arguments || "{}"
-                        }
-                    }))
-                },
-                ...toolResults.map(result => ({
-                    role: "tool",
-                    tool_call_id: result.content[0].tool_call_id,
-                    content: result.content[0].content
-                }))
-            );
-        } else if (model.includes("amazon.nova")) {
-            messages.push(
-                {
-                    role: "assistant",
-                    content: [{
-                        toolUse: {
-                            toolUseId: toolCalls[0].id,
-                            name: toolCalls[0].function.name,
-                            input: typeof toolCalls[0].function.arguments === "string"
-                                ? JSON.parse(toolCalls[0].function.arguments)
-                                : toolCalls[0].function.arguments || {}
-                        }
-                    }]
-                },
-                {
-                    role: "user",
-                    content: [{
-                        toolResult: {
-                            toolUseId: toolResults[0].content[0].tool_call_id,
-                            content: [{
-                                json: {
-                                    content: toolResults[0].content[0].content
-                                }
-                            }]
-                        }
-                    }]
-                }
-            );
-        }
-        return messages;
-    }
-
     // Model-specific formatters
-    static formatClaudeRequest(messages, modelConfig, tools) {
+    static formatClaudeRequest(messages, modelConfig, tools = []) {
         // Convert messages to Claude format and handle role mapping
         let formattedMessages = messages.map(message => {
             const content = Array.isArray(message.content) 
@@ -232,7 +105,7 @@ class BedrockAPI {
                 : [this.formatContentItem(message.content)].filter(Boolean);
 
             return {
-                role: this.ClaudeMapper[message.role] || "user",
+                role: this.ClaudeMapper[message.role] || message.role || "user",
                 content: content
             };
         });
@@ -276,22 +149,25 @@ class BedrockAPI {
         };
 
         // Add tools if available
-        if (tools && tools.length > 0) {
+        if (tools.length > 0) {
             requestBody.tools = tools.map(tool => ({
-                name: tool?.function?.name || "",
-                description: tool?.function?.description || "",
+                type: 'function',
+                name: tool.function.name,
+                display_height_px: 400,
+                display_width_px: 600,
                 input_schema: {
-                    type: "object",
-                    properties: tool?.function?.parameters?.properties || {},
-                    required: tool?.function?.parameters?.required || []
-                }
+                    type: 'object',
+                    properties: tool.function.parameters.properties,
+                    required: tool.function.parameters.required
+                },
+                description: tool.function.description
             }));
         }
 
         return requestBody;
     }
 
-    static formatNovaRequest(messages, modelConfig, tools) {
+    static formatNovaRequest(messages, modelConfig, tools = []) {
         try {
             const systemMessage = messages.find(m => m.role === "system");
             const conversationMessages = messages.filter(m => m.role !== "system");
@@ -338,18 +214,18 @@ class BedrockAPI {
                 }];
             }
 
-            // Simplify tool configuration
-            if (Array.isArray(tools) && tools.length > 0) {
+            // Add tools if available
+            if (tools.length > 0) {
                 requestBody.toolConfig = {
                     tools: tools.map(tool => ({
                         toolSpec: {
-                            name: String(tool?.function?.name || ""),
-                            description: String(tool?.function?.description || ""),
+                            name: tool.function.name,
+                            description: tool.function.description,
                             inputSchema: {
                                 json: {
-                                    type: "object",
-                                    properties: tool?.function?.parameters?.properties || {},
-                                    required: tool?.function?.parameters?.required || []
+                                    type: 'object',
+                                    properties: tool.function.parameters.properties,
+                                    required: tool.function.parameters.required
                                 }
                             }
                         }
@@ -427,7 +303,7 @@ class BedrockAPI {
         };
     }
 
-    static formatMistralRequest(messages, modelConfig, tools) {
+    static formatMistralRequest(messages, modelConfig, tools = []) {
         const formattedMessages = messages.map(message => ({
             role: message.role === "system" ? "system" :
                   message.role === "assistant" ? "assistant" : "user",
@@ -446,16 +322,13 @@ class BedrockAPI {
             top_p: Number(modelConfig.top_p || 0.9)
         };
 
+        // Add tools if available
         if (tools.length > 0) {
-            requestBody.tool_choice = "auto";
             requestBody.tools = tools.map(tool => ({
-                type: "function",
-                function: {
-                    name: tool?.function?.name,
-                    description: tool?.function?.description,
-                    parameters: tool?.function?.parameters
-                }
+                type: 'function',
+                function: tool.function
             }));
+            requestBody.tool_choice = 'auto';
         }
 
         return requestBody;
