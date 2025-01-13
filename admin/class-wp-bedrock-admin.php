@@ -826,29 +826,41 @@ class WP_Bedrock_Admin {
      * Register plugin settings
      */
     public function register_settings() {
+        // Register the settings page
+        register_setting(
+            'wp-bedrock_settings', // Option group
+            'wp-bedrock_settings', // Option name
+            array(
+                'type' => 'array',
+                'description' => 'WP Bedrock Settings',
+                'sanitize_callback' => array($this, 'sanitize_settings'),
+                'show_in_rest' => false,
+            )
+        );
+
         // AWS Settings
-        register_setting('wpbedrock_settings', 'wpbedrock_aws_key');
-        register_setting('wpbedrock_settings', 'wpbedrock_aws_secret');
-        register_setting('wpbedrock_settings', 'wpbedrock_aws_region');
+        register_setting('wp-bedrock_settings', 'wpbedrock_aws_key');
+        register_setting('wp-bedrock_settings', 'wpbedrock_aws_secret');
+        register_setting('wp-bedrock_settings', 'wpbedrock_aws_region');
 
         // Chat Settings
-        register_setting('wpbedrock_settings', 'wpbedrock_model_id');
-        register_setting('wpbedrock_settings', 'wpbedrock_temperature');
-        register_setting('wpbedrock_settings', 'wpbedrock_system_prompt');
-        register_setting('wpbedrock_settings', 'wpbedrock_chat_initial_message');
-        register_setting('wpbedrock_settings', 'wpbedrock_chat_placeholder');
-        register_setting('wpbedrock_settings', 'wpbedrock_enable_stream');
-        register_setting('wpbedrock_settings', 'wpbedrock_context_length');
+        register_setting('wp-bedrock_settings', 'wpbedrock_model_id');
+        register_setting('wp-bedrock_settings', 'wpbedrock_temperature');
+        register_setting('wp-bedrock_settings', 'wpbedrock_system_prompt');
+        register_setting('wp-bedrock_settings', 'wpbedrock_chat_initial_message');
+        register_setting('wp-bedrock_settings', 'wpbedrock_chat_placeholder');
+        register_setting('wp-bedrock_settings', 'wpbedrock_enable_stream');
+        register_setting('wp-bedrock_settings', 'wpbedrock_context_length');
 
         // Image Settings
-        register_setting('wpbedrock_settings', 'wpbedrock_image_model_id');
-        register_setting('wpbedrock_settings', 'wpbedrock_image_width');
-        register_setting('wpbedrock_settings', 'wpbedrock_image_height');
-        register_setting('wpbedrock_settings', 'wpbedrock_image_steps');
-        register_setting('wpbedrock_settings', 'wpbedrock_image_cfg_scale');
-        register_setting('wpbedrock_settings', 'wpbedrock_image_style_preset');
-        register_setting('wpbedrock_settings', 'wpbedrock_image_negative_prompt');
-        register_setting('wpbedrock_settings', 'wpbedrock_image_quality');
+        register_setting('wp-bedrock_settings', 'wpbedrock_image_model_id');
+        register_setting('wp-bedrock_settings', 'wpbedrock_image_width');
+        register_setting('wp-bedrock_settings', 'wpbedrock_image_height');
+        register_setting('wp-bedrock_settings', 'wpbedrock_image_steps');
+        register_setting('wp-bedrock_settings', 'wpbedrock_image_cfg_scale');
+        register_setting('wp-bedrock_settings', 'wpbedrock_image_style_preset');
+        register_setting('wp-bedrock_settings', 'wpbedrock_image_negative_prompt');
+        register_setting('wp-bedrock_settings', 'wpbedrock_image_quality');
     }
 
     /**
@@ -1234,11 +1246,7 @@ class WP_Bedrock_Admin {
                                             )
                                         ))
                                     );
-                                }
-
-                                // Remove tools from request body for subsequent requests
-                                // unset($requestBody['tools']);
-                                
+                                }                                
                                 // Get final response with tool results
                                 $finalResponse = $bedrock->invoke_model($requestBody, $model_id);
                                 $content = $this->extract_response_content($finalResponse, $model_id);
@@ -1353,6 +1361,43 @@ class WP_Bedrock_Admin {
         }
     }
 
+
+    /**
+     * Sanitize settings
+     */
+    public function sanitize_settings($settings) {
+        if (!is_array($settings)) {
+            return array();
+        }
+
+        $sanitized = array();
+        
+        // AWS Settings
+        $sanitized['wpbedrock_aws_key'] = isset($settings['wpbedrock_aws_key']) ? sanitize_text_field($settings['wpbedrock_aws_key']) : '';
+        $sanitized['wpbedrock_aws_secret'] = isset($settings['wpbedrock_aws_secret']) ? sanitize_text_field($settings['wpbedrock_aws_secret']) : '';
+        $sanitized['wpbedrock_aws_region'] = isset($settings['wpbedrock_aws_region']) ? sanitize_text_field($settings['wpbedrock_aws_region']) : 'us-west-2';
+
+        // Chat Settings
+        $sanitized['wpbedrock_model_id'] = isset($settings['wpbedrock_model_id']) ? sanitize_text_field($settings['wpbedrock_model_id']) : '';
+        $sanitized['wpbedrock_temperature'] = isset($settings['wpbedrock_temperature']) ? floatval($settings['wpbedrock_temperature']) : 0.7;
+        $sanitized['wpbedrock_system_prompt'] = isset($settings['wpbedrock_system_prompt']) ? sanitize_textarea_field($settings['wpbedrock_system_prompt']) : '';
+        $sanitized['wpbedrock_chat_initial_message'] = isset($settings['wpbedrock_chat_initial_message']) ? sanitize_text_field($settings['wpbedrock_chat_initial_message']) : '';
+        $sanitized['wpbedrock_chat_placeholder'] = isset($settings['wpbedrock_chat_placeholder']) ? sanitize_text_field($settings['wpbedrock_chat_placeholder']) : '';
+        $sanitized['wpbedrock_enable_stream'] = isset($settings['wpbedrock_enable_stream']) ? '1' : '0';
+        $sanitized['wpbedrock_context_length'] = isset($settings['wpbedrock_context_length']) ? intval($settings['wpbedrock_context_length']) : 4;
+
+        // Image Settings
+        $sanitized['wpbedrock_image_model_id'] = isset($settings['wpbedrock_image_model_id']) ? sanitize_text_field($settings['wpbedrock_image_model_id']) : '';
+        $sanitized['wpbedrock_image_width'] = isset($settings['wpbedrock_image_width']) ? intval($settings['wpbedrock_image_width']) : 1024;
+        $sanitized['wpbedrock_image_height'] = isset($settings['wpbedrock_image_height']) ? intval($settings['wpbedrock_image_height']) : 1024;
+        $sanitized['wpbedrock_image_steps'] = isset($settings['wpbedrock_image_steps']) ? intval($settings['wpbedrock_image_steps']) : 50;
+        $sanitized['wpbedrock_image_cfg_scale'] = isset($settings['wpbedrock_image_cfg_scale']) ? floatval($settings['wpbedrock_image_cfg_scale']) : 7.0;
+        $sanitized['wpbedrock_image_style_preset'] = isset($settings['wpbedrock_image_style_preset']) ? sanitize_text_field($settings['wpbedrock_image_style_preset']) : 'photographic';
+        $sanitized['wpbedrock_image_negative_prompt'] = isset($settings['wpbedrock_image_negative_prompt']) ? sanitize_textarea_field($settings['wpbedrock_image_negative_prompt']) : '';
+        $sanitized['wpbedrock_image_quality'] = isset($settings['wpbedrock_image_quality']) ? sanitize_text_field($settings['wpbedrock_image_quality']) : 'standard';
+
+        return $sanitized;
+    }
 
     public function handle_image_variation() {
         check_ajax_referer('wpbedrock_image_nonce', 'nonce');
