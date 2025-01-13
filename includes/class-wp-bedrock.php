@@ -15,10 +15,10 @@ class WP_Bedrock {
     }
 
     private function load_dependencies() {
-        require_once plugin_dir_path(dirname(__FILE__)) . 'includes/class-wp-bedrock-tools.php';
+      
         require_once plugin_dir_path(dirname(__FILE__)) . 'admin/class-wp-bedrock-admin.php';
         
-        $this->tools = new WP_Bedrock_Tools();
+       
         $this->admin = new WP_Bedrock_Admin($this->plugin_name, $this->version);
     }
 

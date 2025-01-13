@@ -96,9 +96,35 @@ async function initChatbot() {
         $('.tool-item').on('click', function() {
             const $this = $(this);
             const toolDefinition = JSON.parse($this.attr('data-tool-definition'));
+            const functionDefinition = {
+                function: {
+                    name: toolDefinition.info.title,
+                    description: toolDefinition.info.description,
+                    parameters: {
+                        type: "object",
+                        properties: {},
+                        required: []
+                    }
+                }
+            };
+            
+            // Extract parameters from OpenAPI paths
+            const path = Object.values(toolDefinition.paths)[0];
+            const method = Object.keys(path)[0];
+            const parameters = path[method].parameters || [];
+            
+            parameters.forEach(param => {
+                functionDefinition.function.parameters.properties[param.name] = {
+                    type: param.schema.type,
+                    description: param.description || ''
+                };
+                if (param.required) {
+                    functionDefinition.function.parameters.required.push(param.name);
+                }
+            });
             
             $this.toggleClass('selected');
-            chatManager.toggleTool(toolDefinition);
+            chatManager.toggleTool(functionDefinition);
         });
 
         // Message sending

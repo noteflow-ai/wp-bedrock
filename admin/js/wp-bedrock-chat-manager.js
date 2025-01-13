@@ -150,12 +150,24 @@ class BedrockChatManager {
     }
 
     // Handle stream content
-    handleStreamContent(text) {
+    handleStreamContent(content) {
+        // Handle tool responses in streaming mode
+        if (typeof content === 'object' && (content.tool_calls || content.tool_use)) {
+            const toolResponse = content.tool_calls || content.tool_use;
+            this.messageHistory.push({
+                role: 'tool',
+                content: [{ type: 'text', text: JSON.stringify(toolResponse, null, 2) }]
+            });
+            return;
+        }
+
+        // Handle regular text responses
+        const text = typeof content === 'object' ? content.text || JSON.stringify(content) : content;
         const lastMessage = this.elements.messagesContainer.find('.chat-message:last');
         
         if (lastMessage.hasClass('assistant-message')) {
-            const content = lastMessage.find('.message-content');
-            content.html(this.formatMessage(content.text() + text));
+            const messageContent = lastMessage.find('.message-content');
+            messageContent.html(this.formatMessage(messageContent.text() + text));
         } else {
             const message = this.createMessageElement('assistant', text);
             this.elements.messagesContainer.append(message);
@@ -202,20 +214,25 @@ class BedrockChatManager {
             this.elements.messageInput.css('height', 'auto');
 
             // Prepare message content
-            const messageContent = [];
+            let messageContent;
             
-            // Add text content if present
-            if (messageText) {
-                messageContent.push({ type: 'text', text: messageText });
+            // Handle text and image content
+            if (messageText && imagePreview) {
+                messageContent = [
+                    { type: 'text', text: messageText },
+                    { type: 'image', image_url: { url: imagePreview } }
+                ];
+            } else if (imagePreview) {
+                messageContent = [
+                    { type: 'text', text: 'Here is an image:' },
+                    { type: 'image', image_url: { url: imagePreview } }
+                ];
+            } else {
+                messageContent = messageText;
             }
-            
-            // Add image content if present
+
+            // Clear image preview if present
             if (imagePreview) {
-                messageContent.push({ 
-                    type: 'image',
-                    url: imagePreview
-                });
-                // Clear image preview
                 this.elements.imagePreview.hide();
                 this.elements.imageUpload.val('');
                 this.elements.previewImage.attr('src', '');
@@ -235,20 +252,16 @@ class BedrockChatManager {
             // Set processing state
             this.setProcessingState(true);
 
-            // Prepare request
+            // Prepare request with tools if selected
             const requestBody = BedrockAPI.formatRequestBody(
                 this.messageHistory,
                 {
                     model: this.config.default_model,
                     temperature: Number(this.config.default_temperature || 0.7),
                     system_prompt: this.config.default_system_prompt
-                }
+                },
+                this.selectedTools
             );
-
-            // Only add tools to request if there are selected tools
-            if (this.selectedTools && this.selectedTools.length > 0) {
-                requestBody.tools = [...this.selectedTools];
-            }
 
             // Send request
             if (this.config.enable_stream) {
@@ -268,6 +281,16 @@ class BedrockChatManager {
                 });
 
                 if (response.success && response.data) {
+                    // Handle tool responses
+                    if (response.data.tool_calls || response.data.tool_use) {
+                        const toolResponse = response.data.tool_calls || response.data.tool_use;
+                        this.messageHistory.push({
+                            role: 'tool',
+                            content: [{ type: 'text', text: JSON.stringify(toolResponse, null, 2) }]
+                        });
+                    }
+                    
+                    // Handle regular responses
                     const message = this.createMessageElement('assistant', response.data.content);
                     this.elements.messagesContainer.append(message);
                     this.messageHistory.push({
@@ -318,7 +341,9 @@ class BedrockChatManager {
 
     // Toggle tool selection
     toggleTool(toolDefinition) {
-        const index = this.selectedTools.findIndex(t => t.function.name === toolDefinition.function.name);
+        const index = this.selectedTools.findIndex(t => 
+            t.info && t.info.title === toolDefinition.info.title
+        );
         if (index === -1) {
             this.selectedTools.push(toolDefinition);
         } else {

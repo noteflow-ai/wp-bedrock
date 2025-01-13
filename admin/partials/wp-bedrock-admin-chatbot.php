@@ -94,9 +94,9 @@ if (!defined('ABSPATH')) exit;
                                             
                                             if ($tools && isset($tools['tools'])) {
                                                 foreach ($tools['tools'] as $tool) {
-                                                    if (isset($tool['function'])) {
-                                                        $name = $tool['function']['name'];
-                                                        $description = $tool['function']['description'];
+                                                    if (isset($tool['info'])) {
+                                                        $name = $tool['info']['title'];
+                                                        $description = $tool['info']['description'];
                                                         // Convert snake_case to Title Case for display
                                                         $display_name = ucwords(str_replace('_', ' ', $name));
                                                         $tool_json = json_encode($tool);

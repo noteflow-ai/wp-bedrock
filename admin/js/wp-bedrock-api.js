@@ -63,7 +63,14 @@ class BedrockAPI {
 
     // Role mappers for different models
     static ClaudeMapper = {
+        assistant: "assistant",
+        user: "user",
         system: "user",
+        tool: "assistant" // Map tool responses as assistant messages
+    };
+
+    static MistralMapper = {
+        system: "system",
         user: "user",
         assistant: "assistant"
     };
@@ -98,31 +105,78 @@ class BedrockAPI {
 
     // Model-specific formatters
     static formatClaudeRequest(messages, modelConfig, tools = []) {
-        // Convert messages to Claude format and handle role mapping
-        let formattedMessages = messages.map(message => {
-            const content = Array.isArray(message.content) 
-                ? message.content.map(item => this.formatContentItem(item)).filter(Boolean)
-                : [this.formatContentItem(message.content)].filter(Boolean);
-
-            return {
-                role: this.ClaudeMapper[message.role] || message.role || "user",
-                content: content
-            };
-        });
-
-        // Insert semicolon placeholder between consecutive user messages
-        for (let i = 0; i < formattedMessages.length - 1; i++) {
-            const message = formattedMessages[i];
-            const nextMessage = formattedMessages[i + 1];
+        const keys = ["system", "user"];
+        // roles must alternate between "user" and "assistant" in claude, so add a fake assistant message between two user messages
+        for (let i = 0; i < messages.length - 1; i++) {
+            const message = messages[i];
+            const nextMessage = messages[i + 1];
             
-            if (message.role === "user" && nextMessage.role === "user") {
-                formattedMessages.splice(i + 1, 0, {
-                    role: "assistant",
-                    content: ";"
-                });
-                i++; // Skip the inserted message
+            if (keys.includes(message.role) && keys.includes(nextMessage.role)) {
+                messages[i] = [
+                    message,
+                    {
+                        role: "assistant",
+                        content: ";"
+                    }
+                ];
             }
         }
+
+        const formattedMessages = messages
+            .flat()
+            .filter(v => {
+                if (!v.content) return false;
+                if (typeof v.content === "string" && !v.content.trim()) return false;
+                return true;
+            })
+            .map(v => {
+                const { role, content } = v;
+                const mappedRole = this.ClaudeMapper[role] || "user";
+
+                if (typeof content === "string") {
+                    return {
+                        role: mappedRole,
+                        content: content
+                    };
+                }
+
+                // Handle array content (text and images)
+                return {
+                    role: mappedRole,
+                    content: content
+                        .filter(item => item.image_url || item.text)
+                        .map(({ type, text, image_url }) => {
+                            if (type === "text" || text) {
+                                return {
+                                    type: "text",
+                                    text: text
+                                };
+                            }
+
+                            if (image_url?.url) {
+                                const { url = "" } = image_url;
+                                const colonIndex = url.indexOf(":");
+                                const semicolonIndex = url.indexOf(";");
+                                const comma = url.indexOf(",");
+
+                                const mimeType = url.slice(colonIndex + 1, semicolonIndex);
+                                const encodeType = url.slice(semicolonIndex + 1, comma);
+                                const data = url.slice(comma + 1);
+
+                                return {
+                                    type: "image",
+                                    source: {
+                                        type: encodeType,
+                                        media_type: mimeType,
+                                        data
+                                    }
+                                };
+                            }
+                            return null;
+                        })
+                        .filter(Boolean)
+                };
+            });
 
         // Ensure first message is from user
         if (formattedMessages[0]?.role === "assistant") {
@@ -132,203 +186,171 @@ class BedrockAPI {
             });
         }
 
-        // Add system prompt as a user message if present
-        if (modelConfig.system_prompt) {
-            formattedMessages.unshift({
-                role: "user",
-                content: modelConfig.system_prompt
-            });
-        }
+        return {
+                messages: formattedMessages,
+                max_tokens: Number(modelConfig.max_tokens || 2000),
+                temperature: Number(modelConfig.temperature || 0.7),
+                top_p: Number(modelConfig.top_p || 0.9),
+                anthropic_version: "bedrock-2023-05-31",
+                ...(tools.length > 0 && {
+                    tools: tools.map(tool => ({
+                        name: (tool?.function?.name || "").toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_-]/g, ''),
+                        description: tool?.function?.description || "",
+                        input_schema: tool?.function?.parameters || {}
+                    }))
+                })
+            
+        };
+    }
+
+    static formatNovaRequest(messages, modelConfig, tools = []) {
+        const systemMessage = messages.find(m => m.role === "system");
+        const conversationMessages = messages.filter(m => m.role !== "system");
 
         const requestBody = {
-            messages: formattedMessages,
-            max_tokens: Number(modelConfig.max_tokens || 2000),
-            temperature: Number(modelConfig.temperature || 0.7),
-            top_p: Number(modelConfig.top_p || 0.9),
-            anthropic_version: "bedrock-2023-05-31"
+            schemaVersion: "messages-v1",
+            messages: conversationMessages.map(message => {
+                const content = Array.isArray(message.content)
+                    ? message.content
+                    : [{ text: this.getMessageTextContent(message) }];
+
+                return {
+                    role: message.role,
+                    content: content.map(item => {
+                        if (item.text || typeof item === "string") {
+                            return { text: item.text || item };
+                        }
+                        if (item.image_url?.url) {
+                            const { url = "" } = item.image_url;
+                            const colonIndex = url.indexOf(":");
+                            const semicolonIndex = url.indexOf(";");
+                            const comma = url.indexOf(",");
+
+                            const mimeType = url.slice(colonIndex + 1, semicolonIndex);
+                            const format = mimeType.split("/")[1];
+                            const data = url.slice(comma + 1);
+
+                            return {
+                                image: {
+                                    format,
+                                    source: {
+                                        bytes: data
+                                    }
+                                }
+                            };
+                        }
+                        return item;
+                    })
+                };
+            }),
+            inferenceConfig: {
+                temperature: modelConfig.temperature || 0.7,
+                top_p: modelConfig.top_p || 0.9,
+                top_k: modelConfig.top_k || 50,
+                max_new_tokens: modelConfig.max_tokens || 1000,
+                stopSequences: modelConfig.stop || []
+            }
         };
 
-        // Add tools if available
+        if (systemMessage) {
+            requestBody.system = [{
+                text: this.getMessageTextContent(systemMessage)
+            }];
+        }
+
         if (tools.length > 0) {
-            requestBody.tools = tools.map(tool => ({
-                type: 'function',
-                name: tool.function.name,
-                display_height_px: 400,
-                display_width_px: 600,
-                input_schema: {
-                    type: 'object',
-                    properties: tool.function.parameters.properties,
-                    required: tool.function.parameters.required
-                },
-                description: tool.function.description
-            }));
+            requestBody.toolConfig = {
+                    tools: tools.map(tool => ({
+                        toolSpec: {
+                            name: tool?.function?.name || "",
+                            description: tool?.function?.description || "",
+                            inputSchema: {
+                                json: tool?.function?.parameters || {}
+                            }
+                        }
+                    })),
+                toolChoice: { auto: {} }
+            };
         }
 
         return requestBody;
     }
 
-    static formatNovaRequest(messages, modelConfig, tools = []) {
-        try {
-            const systemMessage = messages.find(m => m.role === "system");
-            const conversationMessages = messages.filter(m => m.role !== "system");
-
-            // Ensure all text content is properly stringified
-            const formatTextContent = (content) => {
-                if (Array.isArray(content)) {
-                    return content.map(item => {
-                        const formatted = this.formatContentItem(item);
-                        return formatted?.text || "";
-                    }).join("\n");
-                }
-                return String(content || "");
-            };
-
-            const requestBody = {
-                messages: conversationMessages.map(message => ({
-                    role: String(message.role),
-                    content: Array.isArray(message.content)
-                        ? message.content.map(item => {
-                            const formatted = this.formatContentItem(item);
-                            if (!formatted) return null;
-
-                            if (formatted.type === "text") {
-                                return { text: String(formatted.text) };
-                            } else if (formatted.type === "image") {
-                                return { 
-                                    image: formatted.source
-                                };
-                            }
-                            return null;
-                        }).filter(Boolean)
-                        : [{ text: String(message.content) }]
-                })),
-                temperature: Number(modelConfig.temperature || 0.7),
-                top_k: Number(modelConfig.top_k || 50),
-                max_tokens: Number(modelConfig.max_tokens || 1000),
-                stop_sequences: Array.isArray(modelConfig.stop) ? modelConfig.stop : []
-            };
-
-            if (systemMessage) {
-                requestBody.system = [{
-                    text: formatTextContent(systemMessage.content)
-                }];
-            }
-
-            // Add tools if available
-            if (tools.length > 0) {
-                requestBody.toolConfig = {
-                    tools: tools.map(tool => ({
-                        toolSpec: {
-                            name: tool.function.name,
-                            description: tool.function.description,
-                            inputSchema: {
-                                json: {
-                                    type: 'object',
-                                    properties: tool.function.parameters.properties,
-                                    required: tool.function.parameters.required
-                                }
-                            }
-                        }
-                    })),
-                    toolChoice: { auto: {} }
-                };
-            }
-
-            // Validate the request body can be properly serialized
-            JSON.parse(JSON.stringify(requestBody));
-            
-            return requestBody;
-        } catch (error) {
-            console.error('[BedrockAPI] Error formatting Nova request:', error);
-            throw new Error('Failed to format Nova request: ' + error.message);
+    static getMessageTextContent(message) {
+        if (typeof message.content === "string") {
+            return message.content;
         }
+        if (Array.isArray(message.content)) {
+            return message.content
+                .filter(item => item.text || typeof item === "string")
+                .map(item => item.text || item)
+                .join("\n");
+        }
+        return "";
     }
 
     static formatTitanRequest(messages, modelConfig) {
         const inputText = messages
-            .map(message => {
-                const content = Array.isArray(message.content)
-                    ? message.content.map(item => {
-                        const formatted = this.formatContentItem(item);
-                        return formatted?.text || "";
-                    }).join("\n")
-                    : message.content;
-                return `${message.role}: ${content}`;
-            })
+            .map(message => `${message.role}: ${this.getMessageTextContent(message)}`)
             .join("\n\n");
 
         return {
             inputText,
             textGenerationConfig: {
-                maxTokenCount: Number(modelConfig.max_tokens || 4096),
-                temperature: Number(modelConfig.temperature || 0.7),
-                stopSequences: modelConfig.stop || []
+                maxTokenCount: modelConfig.max_tokens,
+                temperature: modelConfig.temperature,
+                stopSequences: []
             }
         };
     }
 
     static formatLlamaRequest(messages, modelConfig) {
         let prompt = "<|begin_of_text|>";
-        
+
         const systemMessage = messages.find(m => m.role === "system");
         if (systemMessage) {
-            const content = Array.isArray(systemMessage.content)
-                ? systemMessage.content.map(item => {
-                    const formatted = this.formatContentItem(item);
-                    return formatted?.text || "";
-                }).join("\n")
-                : systemMessage.content;
-            prompt += `<|start_header_id|>system<|end_header_id|>\n${content}<|eot_id|>`;
+            prompt += `<|start_header_id|>system<|end_header_id|>\n${this.getMessageTextContent(systemMessage)}<|eot_id|>`;
         }
 
         const conversationMessages = messages.filter(m => m.role !== "system");
         for (const message of conversationMessages) {
             const role = message.role === "assistant" ? "assistant" : "user";
-            const content = Array.isArray(message.content)
-                ? message.content.map(item => {
-                    const formatted = this.formatContentItem(item);
-                    return formatted?.text || "";
-                }).join("\n")
-                : message.content;
-            prompt += `<|start_header_id|>${role}<|end_header_id|>\n${content}<|eot_id|>`;
+            prompt += `<|start_header_id|>${role}<|end_header_id|>\n${this.getMessageTextContent(message)}<|eot_id|>`;
         }
 
         prompt += "<|start_header_id|>assistant<|end_header_id|>";
 
         return {
             prompt,
-            max_gen_len: Number(modelConfig.max_tokens || 512),
-            temperature: Number(modelConfig.temperature || 0.7),
-            top_p: Number(modelConfig.top_p || 0.9)
+            max_gen_len: modelConfig.max_tokens || 512,
+            temperature: modelConfig.temperature || 0.7,
+            top_p: modelConfig.top_p || 0.9
         };
     }
 
     static formatMistralRequest(messages, modelConfig, tools = []) {
         const formattedMessages = messages.map(message => ({
-            role: message.role === "system" ? "system" :
-                  message.role === "assistant" ? "assistant" : "user",
-            content: Array.isArray(message.content)
-                ? message.content.map(item => {
-                    const formatted = this.formatContentItem(item);
-                    return formatted?.text || "";
-                }).join("\n")
-                : message.content
+            role: this.MistralMapper[message.role] || "user",
+            content: this.getMessageTextContent(message)
         }));
 
         const requestBody = {
             messages: formattedMessages,
-            max_tokens: Number(modelConfig.max_tokens || 4096),
-            temperature: Number(modelConfig.temperature || 0.7),
-            top_p: Number(modelConfig.top_p || 0.9)
+            max_tokens: modelConfig.max_tokens || 4096,
+            temperature: modelConfig.temperature || 0.7,
+            top_p: modelConfig.top_p || 0.9
         };
 
-        // Add tools if available
         if (tools.length > 0) {
+            requestBody.tool_choice = "auto";
             requestBody.tools = tools.map(tool => ({
-                type: 'function',
-                function: tool.function
+                type: "function",
+                function: {
+                    name: tool?.function?.name,
+                    description: tool?.function?.description,
+                    parameters: tool?.function?.parameters
+                }
             }));
-            requestBody.tool_choice = 'auto';
         }
 
         return requestBody;

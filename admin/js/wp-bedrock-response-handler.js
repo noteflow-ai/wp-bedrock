@@ -34,14 +34,24 @@ class BedrockResponseHandler {
                         this.callbacks.onContent(text);
                     }
                 } else if (decoded.type === 'tool_call') {
-                    // Tool calls are handled by the backend, just display the execution message
+                    // Forward tool call to chat manager as a tool response
                     if (this.callbacks.onContent) {
-                        this.callbacks.onContent(`Executing tool: ${decoded.name}...`);
+                        this.callbacks.onContent({
+                            tool_calls: [{
+                                name: decoded.name,
+                                arguments: decoded.arguments
+                            }]
+                        });
                     }
                 } else if (decoded.type === 'tool_result') {
-                    // Tool results are handled by the backend, just display the result
+                    // Forward tool result to chat manager
                     if (this.callbacks.onContent) {
-                        this.callbacks.onContent(`\nTool result: ${JSON.stringify(decoded.content, null, 2)}\n\n`);
+                        this.callbacks.onContent({
+                            tool_use: {
+                                name: decoded.name,
+                                result: decoded.content
+                            }
+                        });
                     }
                 }
             } else if (response.error) {

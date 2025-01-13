@@ -57,6 +57,51 @@ class WP_Bedrock_Admin {
     }
 
     /**
+     * Register the plugin admin menu
+     */
+    public function add_plugin_admin_menu() {
+        add_menu_page(
+            'WP Bedrock', // Page title
+            'WP Bedrock', // Menu title
+            'manage_options', // Capability
+            'wp-bedrock', // Menu slug
+            array($this, 'display_plugin_setup_page'), // Function to display the page
+            'dashicons-admin-generic', // Icon
+            100 // Position
+        );
+
+        // Remove default submenu item
+        remove_submenu_page('wp-bedrock', 'wp-bedrock');
+
+        add_submenu_page(
+            'wp-bedrock', // Parent slug
+            'Settings', // Page title
+            'Settings', // Menu title
+            'manage_options', // Capability
+            'wp-bedrock_settings', // Menu slug for settings page
+            array($this, 'display_settings_page') // Function to display the page
+        );
+
+        add_submenu_page(
+            'wp-bedrock', // Parent slug
+            'AI Chat', // Page title
+            'AI Chat', // Menu title
+            'manage_options', // Capability
+            'wp-bedrock_chatbot', // Menu slug
+            array($this, 'display_chatbot_page') // Function to display the page
+        );
+
+        add_submenu_page(
+            'wp-bedrock', // Parent slug
+            'Image Generation', // Page title
+            'Image Generation', // Menu title
+            'manage_options', // Capability
+            'wp-bedrock_image', // Menu slug
+            array($this, 'display_image_page') // Function to display the page
+        );
+    }
+
+    /**
      * Register the stylesheets for the admin area.
      */
     public function enqueue_styles() {
@@ -418,80 +463,146 @@ class WP_Bedrock_Admin {
     }
 
     /**
-     * Add menu item
+     * Load tool definitions from OpenAPI spec
      */
-    public function add_plugin_admin_menu() {
-        add_menu_page(
-            'AI Chat for Amazon Bedrock',
-            'AI Chat for Amazon Bedrock',
-            'manage_options',
-            $this->plugin_name,
-            array($this, 'display_plugin_setup_page'),
-            'dashicons-format-chat',
-            90
-        );
-
-        add_submenu_page(
-            $this->plugin_name,
-            'Settings',
-            'Settings',
-            'manage_options',
-            $this->plugin_name . '_settings',
-            array($this, 'display_settings_page')
-        );
-
-        add_submenu_page(
-            $this->plugin_name,
-            'Chatbot',
-            'Chatbot',
-            'manage_options',
-            $this->plugin_name . '_chatbot',
-            array($this, 'display_chatbot_page')
-        );
-
-        add_submenu_page(
-            $this->plugin_name,
-            'Image Generation',
-            'Image Generation',
-            'manage_options',
-            $this->plugin_name . '_image',
-            array($this, 'display_image_page')
-        );
+    private function load_tools() {
+        $tools_json = file_get_contents(WPBEDROCK_PLUGIN_DIR . 'includes/tools.json');
+        if (!$tools_json) {
+            throw new Exception('Failed to load tools definition');
+        }
+        return json_decode($tools_json, true)['tools'];
     }
 
     /**
-     * Register plugin settings
+     * Find tool definition by name
      */
-    public function register_settings() {
-        // AWS Settings
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_aws_key');
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_aws_secret');
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_aws_region');
-
-        // Chat Settings
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_model_id');
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_temperature');
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_max_tokens');
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_system_prompt');
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_chat_initial_message');
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_chat_placeholder');
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_enable_stream');
-        register_setting($this->plugin_name . '_settings', 'wpbedrock_context_length', array(
-            'type' => 'integer',
-            'default' => 4,
-            'sanitize_callback' => function($value) {
-                $value = intval($value);
-                return min(max($value, 1), 10);
+    private function find_tool($tools, $tool_name) {
+        foreach ($tools as $tool) {
+            if (strtolower($tool['info']['title']) === str_replace('_', ' ', $tool_name)) {
+                return $tool;
             }
-        ));
-
+        }
+        throw new Exception('Unknown tool: ' . $tool_name);
     }
 
     /**
-     * Display pages
+     * Handle tool execution
      */
-    public function display_settings_page() {
-        include plugin_dir_path(dirname(__FILE__)) . 'admin/partials/wp-bedrock-admin-settings.php';
+    private function handle_tool_execution($tool_name, $args) {
+        try {
+            // Load tool definitions
+            $tools = $this->load_tools();
+            $tool = $this->find_tool($tools, $tool_name);
+
+            // Get server URL and path
+            $base_url = $tool['servers'][0]['url'];
+            $path = array_key_first($tool['paths']);
+            $operation = $tool['paths'][$path][array_key_first($tool['paths'][$path])];
+
+            // Validate required parameters
+            if (isset($operation['parameters'])) {
+                foreach ($operation['parameters'] as $param) {
+                    if (isset($param['required']) && $param['required'] && !isset($args[$param['name']])) {
+                        throw new Exception("Missing required parameter: {$param['name']}");
+                    }
+                }
+            }
+
+            // Process parameters based on OpenAPI spec
+            $query_params = array();
+            $body_params = array();
+            $path_params = array();
+            $header_params = array();
+
+            if (isset($operation['parameters'])) {
+                foreach ($operation['parameters'] as $param) {
+                    if (!isset($args[$param['name']])) {
+                        if (isset($param['required']) && $param['required']) {
+                            throw new Exception("Missing required parameter: {$param['name']}");
+                        }
+                        continue;
+                    }
+
+                    $value = $args[$param['name']];
+                    
+                    // Add parameter to appropriate location
+                    switch ($param['in']) {
+                        case 'query':
+                            $query_params[$param['name']] = $value;
+                            break;
+                        case 'path':
+                            $path_params[$param['name']] = $value;
+                            break;
+                        case 'header':
+                            $header_params[$param['name']] = $value;
+                            break;
+                        case 'body':
+                            $body_params = array_merge($body_params, $value);
+                            break;
+                    }
+                }
+            }
+
+            // Build URL with path parameters
+            $url = $base_url . $path;
+            foreach ($path_params as $key => $value) {
+                $url = str_replace('{' . $key . '}', urlencode($value), $url);
+            }
+
+            // Build request options
+            $request_options = array(
+                'method' => strtoupper(array_key_first($tool['paths'][$path])),
+                'headers' => array_merge(
+                    array(
+                        'Accept' => 'application/json, application/xml;q=0.9, text/plain;q=0.8',
+                        'User-Agent' => 'WP-Bedrock/1.0'
+                    ),
+                    $header_params
+                )
+            );
+
+            // Add body if needed
+            if (!empty($body_params)) {
+                $request_options['body'] = json_encode($body_params);
+                $request_options['headers']['Content-Type'] = 'application/json';
+            }
+
+            // Make request
+            $response = wp_remote_request(
+                add_query_arg($query_params, $url),
+                $request_options
+            );
+
+            if (is_wp_error($response)) {
+                throw new Exception('Request failed: ' . $response->get_error_message());
+            }
+
+            // Get response content type and body
+            $content_type = wp_remote_retrieve_header($response, 'content-type');
+            $body = wp_remote_retrieve_body($response);
+
+            // Parse response based on content type
+            if (empty($body)) {
+                return null;
+            } else if (strpos($content_type, 'application/json') !== false) {
+                $result = json_decode($body, true);
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    throw new Exception('Invalid JSON response');
+                }
+                return $result;
+            } else if (strpos($content_type, 'application/xml') !== false || strpos($content_type, 'text/xml') !== false) {
+                $xml = simplexml_load_string($body);
+                if (!$xml) {
+                    throw new Exception('Invalid XML response');
+                }
+                return json_decode(json_encode($xml), true);
+            } else {
+                return $body;
+            }
+        } catch (Exception $e) {
+            error_log('[WP Bedrock] Tool execution error: ' . $e->getMessage());
+            throw $e;
+        }
     }
 
     public function display_chatbot_page() {
@@ -507,8 +618,6 @@ class WP_Bedrock_Admin {
             );
             settings_errors('wpbedrock_messages');
         }
-
-        
 
         // Get existing chat configuration
         $chat_config = array(
@@ -552,63 +661,9 @@ class WP_Bedrock_Admin {
                 throw new Exception('Invalid arguments format');
             }
 
-            switch ($tool) {
-                case 'duckduckgo_search':
-                    if (!isset($args['query'])) {
-                        throw new Exception('Search query is required');
-                    }
-                    $query = urlencode($args['query']);
-                    $response = wp_remote_get("https://api.duckduckgo.com/?q={$query}&format=json");
-                    
-                    if (is_wp_error($response)) {
-                        throw new Exception('Failed to fetch search results');
-                    }
-                    
-                    $body = json_decode(wp_remote_retrieve_body($response), true);
-                    if (!$body) {
-                        throw new Exception('Invalid response from DuckDuckGo');
-                    }
-                    
-                    wp_send_json_success($body);
-                    break;
+            $result = $this->handle_tool_execution($tool, $args);
+            wp_send_json_success($result);
 
-                case 'arxiv_search':
-                    if (!isset($args['query'])) {
-                        throw new Exception('Search query is required');
-                    }
-                    $query = urlencode($args['query']);
-                    $max_results = isset($args['max_results']) ? min(intval($args['max_results']), 10) : 5;
-                    
-                    $response = wp_remote_get("http://export.arxiv.org/api/query?search_query=all:{$query}&start=0&max_results={$max_results}");
-                    
-                    if (is_wp_error($response)) {
-                        throw new Exception('Failed to fetch arXiv results');
-                    }
-                    
-                    $xml = simplexml_load_string(wp_remote_retrieve_body($response));
-                    if (!$xml) {
-                        throw new Exception('Invalid response from arXiv');
-                    }
-                    
-                    $results = array();
-                    foreach ($xml->entry as $entry) {
-                        $results[] = array(
-                            'title' => (string)$entry->title,
-                            'summary' => (string)$entry->summary,
-                            'authors' => array_map(function($author) {
-                                return (string)$author->name;
-                            }, $entry->author),
-                            'link' => (string)$entry->id,
-                            'published' => (string)$entry->published
-                        );
-                    }
-                    
-                    wp_send_json_success($results);
-                    break;
-
-                default:
-                    throw new Exception('Unknown tool: ' . $tool);
-            }
         } catch (Exception $e) {
             wp_send_json_error($e->getMessage());
         }
@@ -758,6 +813,42 @@ class WP_Bedrock_Admin {
 
     public function display_plugin_setup_page() {
         include_once('partials/wp-bedrock-admin-display.php');
+    }
+
+    /**
+     * Display the settings page
+     */
+    public function display_settings_page() {
+        include_once('partials/wp-bedrock-admin-settings.php');
+    }
+
+    /**
+     * Register plugin settings
+     */
+    public function register_settings() {
+        // AWS Settings
+        register_setting('wpbedrock_settings', 'wpbedrock_aws_key');
+        register_setting('wpbedrock_settings', 'wpbedrock_aws_secret');
+        register_setting('wpbedrock_settings', 'wpbedrock_aws_region');
+
+        // Chat Settings
+        register_setting('wpbedrock_settings', 'wpbedrock_model_id');
+        register_setting('wpbedrock_settings', 'wpbedrock_temperature');
+        register_setting('wpbedrock_settings', 'wpbedrock_system_prompt');
+        register_setting('wpbedrock_settings', 'wpbedrock_chat_initial_message');
+        register_setting('wpbedrock_settings', 'wpbedrock_chat_placeholder');
+        register_setting('wpbedrock_settings', 'wpbedrock_enable_stream');
+        register_setting('wpbedrock_settings', 'wpbedrock_context_length');
+
+        // Image Settings
+        register_setting('wpbedrock_settings', 'wpbedrock_image_model_id');
+        register_setting('wpbedrock_settings', 'wpbedrock_image_width');
+        register_setting('wpbedrock_settings', 'wpbedrock_image_height');
+        register_setting('wpbedrock_settings', 'wpbedrock_image_steps');
+        register_setting('wpbedrock_settings', 'wpbedrock_image_cfg_scale');
+        register_setting('wpbedrock_settings', 'wpbedrock_image_style_preset');
+        register_setting('wpbedrock_settings', 'wpbedrock_image_negative_prompt');
+        register_setting('wpbedrock_settings', 'wpbedrock_image_quality');
     }
 
     /**
@@ -1001,52 +1092,11 @@ class WP_Bedrock_Admin {
                 throw new Exception('Request body is required');
             }
 
-            // Parse tools if provided
+            // Add tools to request body if provided
             if (isset($request_data['tools']) && is_string($request_data['tools'])) {
                 $tools = json_decode($request_data['tools'], true);
                 if (json_last_error() === JSON_ERROR_NONE && !empty($tools)) {
-                    // Format tools based on model type
-                    if (strpos($model_id, 'anthropic.claude') !== false) {
-                        $requestBody['tools'] = array_map(function($tool) {
-                            return [
-                                'type' => 'function',
-                                'name' => $tool['function']['name'] ?? '',
-                                'description' => $tool['function']['description'] ?? '',
-                                'input_schema' => [
-                                    'type' => 'object',
-                                    'properties' => $tool['function']['parameters']['properties'] ?? [],
-                                    'required' => $tool['function']['parameters']['required'] ?? []
-                                ]
-                            ];
-                        }, $tools);
-                    } elseif (strpos($model_id, 'us.amazon.nova') !== false) {
-                        $requestBody['toolConfig'] = [
-                            'tools' => array_map(function($tool) {
-                                return [
-                                    'toolSpec' => [
-                                        'name' => $tool['function']['name'] ?? '',
-                                        'description' => $tool['function']['description'] ?? '',
-                                        'inputSchema' => [
-                                            'json' => [
-                                                'type' => 'object',
-                                                'properties' => $tool['function']['parameters']['properties'] ?? [],
-                                                'required' => $tool['function']['parameters']['required'] ?? []
-                                            ]
-                                        ]
-                                    ]
-                                ];
-                            }, $tools),
-                            'toolChoice' => ['auto' => []]
-                        ];
-                    } elseif (strpos($model_id, 'mistral.mistral') !== false) {
-                        $requestBody['tools'] = array_map(function($tool) {
-                            return [
-                                'type' => 'function',
-                                'function' => $tool['function']
-                            ];
-                        }, $tools);
-                        $requestBody['tool_choice'] = 'auto';
-                    }
+                    $requestBody['tools'] = $tools;
                 }
             }
 
@@ -1073,9 +1123,17 @@ class WP_Bedrock_Admin {
             // Initialize streaming flag
             $enable_stream = get_option('wpbedrock_enable_stream', '1') === '1';
             $is_stream = false;
+               // Check if model supports tools
+               $supportsTools = (
+                strpos($model_id, 'anthropic.claude-3') !== false ||
+                strpos($model_id, 'anthropic.claude-3.5') !== false ||
+                strpos($model_id, 'us.amazon.nova') !== false ||
+                strpos($model_id, 'mistral.mistral') !== false
+            );
             
             // Check if streaming is requested and enabled
             if ($enable_stream && isset($request_data['stream']) && $request_data['stream'] === '1') {
+                //Sreaming
                 $is_stream = true;
                 $this->setup_stream_environment();
                 
@@ -1095,53 +1153,101 @@ class WP_Bedrock_Admin {
                 
                 exit;
             } else {
+                //Non-streaming
                 $response = $bedrock->invoke_model($requestBody, $model_id);
                 
                 // Check for tool calls in the response
-                if (strpos($model_id, 'anthropic.claude') !== false && isset($response['content'])) {
+             
+
+                if ($supportsTools && isset($response['content'])) {
                     foreach ($response['content'] as $content) {
-                        if ($content['type'] === 'tool_calls') {
-                            $toolCalls = $content['tool_calls'];
-                            $results = array();
-                            
-                            foreach ($toolCalls as $toolCall) {
-                                try {
-                                    $result = $this->handle_tool_execution($toolCall['function']['name'], $toolCall['function']['arguments']);
-                                    $results[] = array(
-                                        'tool_call_id' => $toolCall['id'],
+                        if ($content['type'] === 'tool_use' || isset($content['tool_calls'])) {
+                            try {
+                                $toolName = isset($content['name']) ? $content['name'] : $content['tool_calls'][0]['function']['name'];
+                                $toolInput = isset($content['input']) ? $content['input'] : 
+                                    (isset($content['tool_calls'][0]['function']['arguments']) ? 
+                                        json_decode($content['tool_calls'][0]['function']['arguments'], true) : array());
+                                
+                                error_log('[WP Bedrock] Executing tool: ' . $toolName . ' with input: ' . json_encode($toolInput));
+                                $result = $this->handle_tool_execution($toolName, $toolInput);
+                                error_log('[WP Bedrock] Tool execution result: ' . json_encode($result));
+
+                                if (strpos($model_id, 'anthropic.claude') !== false) {
+                                    // Claude format
+                                    $requestBody['messages'][] = array(
+                                        'role' => 'assistant',
+                                        'content' => array(array(
+                                            'type' => 'tool_use',
+                                            'id' => isset($content['id']) ? $content['id'] : $content['tool_calls'][0]['id'],
+                                            'name' => $toolName,
+                                            'input' => $toolInput
+                                        ))
+                                    );
+                                    $requestBody['messages'][] = array(
+                                        'role' => 'user',
+                                        'content' => array(array(
+                                            'type' => 'tool_result',
+                                            'tool_use_id' => isset($content['id']) ? $content['id'] : $content['tool_calls'][0]['id'],
+                                            'content' => $result
+                                        ))
+                                    );
+                                } elseif (strpos($model_id, 'mistral.mistral') !== false) {
+                                    // Mistral format
+                                    $requestBody['messages'][] = array(
+                                        'role' => 'assistant',
+                                        'content' => '',
+                                        'tool_calls' => array(array(
+                                            'id' => isset($content['id']) ? $content['id'] : $content['tool_calls'][0]['id'],
+                                            'function' => array(
+                                                'name' => $toolName,
+                                                'arguments' => json_encode($toolInput)
+                                            )
+                                        ))
+                                    );
+                                    $requestBody['messages'][] = array(
+                                        'role' => 'tool',
+                                        'tool_call_id' => isset($content['id']) ? $content['id'] : $content['tool_calls'][0]['id'],
                                         'content' => $result
                                     );
-                                } catch (Exception $e) {
-                                    error_log('[WP Bedrock] Tool execution error: ' . $e->getMessage());
-                                    throw $e;
+                                } elseif (strpos($model_id, 'amazon.nova') !== false) {
+                                    // Nova format
+                                    $requestBody['messages'][] = array(
+                                        'role' => 'assistant',
+                                        'content' => array(array(
+                                            'toolUse' => array(
+                                                'toolUseId' => isset($content['id']) ? $content['id'] : $content['tool_calls'][0]['id'],
+                                                'name' => $toolName,
+                                                'input' => $toolInput
+                                            )
+                                        ))
+                                    );
+                                    $requestBody['messages'][] = array(
+                                        'role' => 'user',
+                                        'content' => array(array(
+                                            'toolResult' => array(
+                                                'toolUseId' => isset($content['id']) ? $content['id'] : $content['tool_calls'][0]['id'],
+                                                'content' => array(array(
+                                                    'json' => array(
+                                                        'content' => $result
+                                                    )
+                                                ))
+                                            )
+                                        ))
+                                    );
                                 }
+
+                                // Remove tools from request body for subsequent requests
+                                // unset($requestBody['tools']);
+                                
+                                // Get final response with tool results
+                                $finalResponse = $bedrock->invoke_model($requestBody, $model_id);
+                                $content = $this->extract_response_content($finalResponse, $model_id);
+                                wp_send_json_success(['content' => $content]);
+                                return;
+                            } catch (Exception $e) {
+                                error_log('[WP Bedrock] Tool execution error: ' . $e->getMessage());
+                                throw $e;
                             }
-                            
-                            // Create a new request with tool results
-                            $requestBody['messages'][] = array(
-                                'role' => 'assistant',
-                                'content' => array(array(
-                                    'type' => 'tool_calls',
-                                    'tool_calls' => $toolCalls
-                                ))
-                            );
-                            
-                            foreach ($results as $result) {
-                                $requestBody['messages'][] = array(
-                                    'role' => 'tool',
-                                    'content' => array(array(
-                                        'type' => 'tool_result',
-                                        'tool_call_id' => $result['tool_call_id'],
-                                        'content' => $result['content']
-                                    ))
-                                );
-                            }
-                            
-                            // Get final response with tool results
-                            $finalResponse = $bedrock->invoke_model($requestBody, $model_id);
-                            $content = $this->extract_response_content($finalResponse, $model_id);
-                            wp_send_json_success(['content' => $content]);
-                            return;
                         }
                     }
                 }
@@ -1247,66 +1353,6 @@ class WP_Bedrock_Admin {
         }
     }
 
-    /**
-     * Handle tool execution
-     */
-    private function handle_tool_execution($tool_name, $args) {
-        switch ($tool_name) {
-            case 'duckduckgo_search':
-                if (!isset($args['query'])) {
-                    throw new Exception('Search query is required');
-                }
-                $query = urlencode($args['query']);
-                $response = wp_remote_get("https://api.duckduckgo.com/?q={$query}&format=json");
-                
-                if (is_wp_error($response)) {
-                    throw new Exception('Failed to fetch search results');
-                }
-                
-                $body = json_decode(wp_remote_retrieve_body($response), true);
-                if (!$body) {
-                    throw new Exception('Invalid response from DuckDuckGo');
-                }
-                
-                return $body;
-
-            case 'arxiv_search':
-                if (!isset($args['query'])) {
-                    throw new Exception('Search query is required');
-                }
-                $query = urlencode($args['query']);
-                $max_results = isset($args['max_results']) ? min(intval($args['max_results']), 10) : 5;
-                
-                $response = wp_remote_get("http://export.arxiv.org/api/query?search_query=all:{$query}&start=0&max_results={$max_results}");
-                
-                if (is_wp_error($response)) {
-                    throw new Exception('Failed to fetch arXiv results');
-                }
-                
-                $xml = simplexml_load_string(wp_remote_retrieve_body($response));
-                if (!$xml) {
-                    throw new Exception('Invalid response from arXiv');
-                }
-                
-                $results = array();
-                foreach ($xml->entry as $entry) {
-                    $results[] = array(
-                        'title' => (string)$entry->title,
-                        'summary' => (string)$entry->summary,
-                        'authors' => array_map(function($author) {
-                            return (string)$author->name;
-                        }, $entry->author),
-                        'link' => (string)$entry->id,
-                        'published' => (string)$entry->published
-                    );
-                }
-                
-                return $results;
-
-            default:
-                throw new Exception('Unknown tool: ' . $tool_name);
-        }
-    }
 
     public function handle_image_variation() {
         check_ajax_referer('wpbedrock_image_nonce', 'nonce');

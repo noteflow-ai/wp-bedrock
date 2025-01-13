@@ -284,6 +284,7 @@ class WP_Bedrock_AWS {
                 $buffer = substr($buffer, $pos + 1);
                 
                 if (!empty($message)) {
+                    $this->log_debug('Streaming response:', json_encode($message, JSON_PRETTY_PRINT));
                     $events = $this->parse_event_data($message);
                     foreach ($events as $event) {
                         if ($callback) {
@@ -347,11 +348,6 @@ class WP_Bedrock_AWS {
      */
     public function invoke_model($request_body, $model_id, $stream = false, $callback = null) {
         try {
-            // Ensure request body is properly formatted for Claude models
-            if (strpos($model_id, 'anthropic.claude') !== false) {
-                $request_body['anthropic_version'] = 'bedrock-2023-05-31';
-            }
-
             $this->log_debug('Request:', [
                 'model_id' => $model_id,
                 'stream' => $stream,
@@ -364,7 +360,6 @@ class WP_Bedrock_AWS {
                 $response = $this->execute_with_retry(function() use ($url, $request_body) {
                     return $this->make_request($url, 'POST', $request_body, true);
                 });
-
                 $this->process_stream($response, $callback);
                 return null;
             } else {
@@ -379,22 +374,7 @@ class WP_Bedrock_AWS {
                     throw new Exception('Failed to decode response: ' . json_last_error_msg());
                 }
 
-                // Log non-streaming response for debugging
                 $this->log_debug('Non-streaming response:', json_encode($result, JSON_PRETTY_PRINT));
-
-                // Check for tool calls in response
-                if (isset($result['tool_calls'])) {
-                    $this->log_debug('Tool calls found in non-streaming response:', json_encode($result['tool_calls'], JSON_PRETTY_PRINT));
-                }
-
-                // Extract output text from Nova response
-                if (strpos($model_id, 'us.amazon.nova') !== false) {
-                    if (!isset($result['output_text'])) {
-                        throw new Exception('Invalid Nova model response: missing output_text');
-                    }
-                    return ['content' => [['text' => $result['output_text']]]];
-                }
-
                 return $result;
             }
         } catch (Exception $e) {
