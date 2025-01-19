@@ -61,6 +61,28 @@ class BedrockAPI {
         }
     }
 
+    // Format message for display
+    static formatMessageContent(content, md) {
+        if (typeof content === 'string') {
+            return md.render(content);
+        }
+
+        if (Array.isArray(content)) {
+            return content
+                .map(item => {
+                    if (item.type === 'text') {
+                        return md.render(item.text);
+                    } else if (item.type === 'image') {
+                        return `<img src="${item.url}" alt="Generated image" class="generated-image">`;
+                    }
+                    return '';
+                })
+                .join('');
+        }
+
+        return '';
+    }
+
     // Role mappers for different models
     static ClaudeMapper = {
         assistant: "assistant",
@@ -75,6 +97,78 @@ class BedrockAPI {
         assistant: "assistant"
     };
 
+    // Normalize messages to ensure model-specific requirements are met
+    static normalizeMessages(messages, model) {
+        // Start with system messages
+        const systemMessages = messages.filter(msg => msg.role === 'system');
+        const userMessages = messages.filter(msg => msg.role === 'user');
+        const assistantMessages = messages.filter(msg => msg.role === 'assistant');
+        const toolMessages = messages.filter(msg => msg.role === 'tool');
+        
+        let normalizedMessages = [];
+
+        // Handle model-specific requirements
+        if (model.includes('amazon.nova')) {
+            // Nova requires first turn to be user
+            if (systemMessages.length > 0) {
+                normalizedMessages.push(...systemMessages);
+            }
+            
+            // Ensure we have at least one user message
+            if (userMessages.length === 0) {
+                normalizedMessages.push({
+                    role: 'user',
+                    content: [{ type: 'text', text: 'Hello' }]
+                });
+            } else {
+                // Interleave user and assistant messages
+                let messageIndex = 0;
+                while (messageIndex < Math.max(userMessages.length, assistantMessages.length)) {
+                    if (messageIndex < userMessages.length) {
+                        normalizedMessages.push(userMessages[messageIndex]);
+                    }
+                    if (messageIndex < assistantMessages.length) {
+                        normalizedMessages.push(assistantMessages[messageIndex]);
+                    }
+                    // Add any tool messages for this turn
+                    const turnToolMessages = toolMessages.filter(msg => msg.turnIndex === messageIndex);
+                    normalizedMessages.push(...turnToolMessages);
+                    messageIndex++;
+                }
+            }
+        } else if (model.includes('anthropic.claude')) {
+            // Claude requires alternating user/assistant messages
+            if (systemMessages.length > 0) {
+                normalizedMessages.push(...systemMessages.map(msg => ({
+                    ...msg,
+                    role: 'user' // Claude treats system messages as user messages
+                })));
+            }
+            
+            let messageIndex = 0;
+            while (messageIndex < Math.max(userMessages.length, assistantMessages.length)) {
+                if (messageIndex < userMessages.length) {
+                    normalizedMessages.push(userMessages[messageIndex]);
+                }
+                if (messageIndex < assistantMessages.length) {
+                    normalizedMessages.push(assistantMessages[messageIndex]);
+                } else if (messageIndex < userMessages.length - 1) {
+                    // Add empty assistant response between consecutive user messages
+                    normalizedMessages.push({
+                        role: 'assistant',
+                        content: [{ type: 'text', text: ';' }]
+                    });
+                }
+                messageIndex++;
+            }
+        } else {
+            // Default handling for other models
+            normalizedMessages = [...messages];
+        }
+
+        return normalizedMessages;
+    }
+
     // Format request body based on model type
     static formatRequestBody(messages, modelConfig, tools = []) {
         if (!Array.isArray(messages)) {
@@ -86,18 +180,21 @@ class BedrockAPI {
         }
 
         const model = modelConfig.model;
+        
+        // Normalize messages based on model requirements
+        const normalizedMessages = this.normalizeMessages(messages, model);
 
         // Format messages based on model type
         if (model.includes("anthropic.claude")) {
-            return this.formatClaudeRequest(messages, modelConfig, tools);
+            return this.formatClaudeRequest(normalizedMessages, modelConfig, tools);
         } else if (model.includes("amazon.nova")) {
-            return this.formatNovaRequest(messages, modelConfig, tools);
+            return this.formatNovaRequest(normalizedMessages, modelConfig, tools);
         } else if (model.startsWith("amazon.titan")) {
-            return this.formatTitanRequest(messages, modelConfig);
+            return this.formatTitanRequest(normalizedMessages, modelConfig);
         } else if (model.includes("meta.llama")) {
-            return this.formatLlamaRequest(messages, modelConfig);
+            return this.formatLlamaRequest(normalizedMessages, modelConfig);
         } else if (model.includes("mistral.mistral")) {
-            return this.formatMistralRequest(messages, modelConfig, tools);
+            return this.formatMistralRequest(normalizedMessages, modelConfig, tools);
         }
 
         throw new Error(`Unsupported model: ${model}`);
@@ -204,76 +301,99 @@ class BedrockAPI {
     }
 
     static formatNovaRequest(messages, modelConfig, tools = []) {
+        // Extract system message and conversation messages
         const systemMessage = messages.find(m => m.role === "system");
         const conversationMessages = messages.filter(m => m.role !== "system");
 
-        const requestBody = {
-            schemaVersion: "messages-v1",
-            messages: conversationMessages.map(message => {
-                const content = Array.isArray(message.content)
-                    ? message.content
-                    : [{ text: this.getMessageTextContent(message) }];
+        // Build request body according to Nova schema
+        const requestBody = {};
 
-                return {
-                    role: message.role,
-                    content: content.map(item => {
-                        if (item.text || typeof item === "string") {
-                            return { text: item.text || item };
-                        }
-                        if (item.image_url?.url) {
-                            const { url = "" } = item.image_url;
-                            const colonIndex = url.indexOf(":");
-                            const semicolonIndex = url.indexOf(";");
-                            const comma = url.indexOf(",");
-
-                            const mimeType = url.slice(colonIndex + 1, semicolonIndex);
-                            const format = mimeType.split("/")[1];
-                            const data = url.slice(comma + 1);
-
-                            return {
-                                image: {
-                                    format,
-                                    source: {
-                                        bytes: data
-                                    }
-                                }
-                            };
-                        }
-                        return item;
-                    })
-                };
-            }),
-            inferenceConfig: {
-                temperature: modelConfig.temperature || 0.7,
-                top_p: modelConfig.top_p || 0.9,
-                top_k: modelConfig.top_k || 50,
-                max_new_tokens: modelConfig.max_tokens || 1000,
-                stopSequences: modelConfig.stop || []
-            }
-        };
-
+        // Add system message if present
         if (systemMessage) {
             requestBody.system = [{
                 text: this.getMessageTextContent(systemMessage)
             }];
         }
 
+        // Format conversation messages
+        requestBody.messages = conversationMessages.map(message => {
+            const formattedContent = Array.isArray(message.content)
+                ? message.content.map(item => {
+                    if (item.text || typeof item === "string") {
+                        return {
+                            text: item.text || item
+                        };
+                    }
+                    if (item.image_url?.url) {
+                        const { url = "" } = item.image_url;
+                        if (url.startsWith('data:')) {
+                            const [header, data] = url.split(',');
+                            const mimeType = header.split(':')[1].split(';')[0];
+                            const format = mimeType.split('/')[1];
+                            return {
+                                image: {
+                                    format: format,
+                                    source: {
+                                        bytes: data
+                                    }
+                                }
+                            };
+                        }
+                    }
+                    return null;
+                }).filter(Boolean)
+                : [{
+                    text: this.getMessageTextContent(message)
+                }];
+
+            return {
+                role: message.role,
+                content: formattedContent
+            };
+        });
+
+        // Add inference configuration
+        requestBody.inferenceConfig = {
+            temperature: Number(modelConfig.temperature || 0.8),
+            top_p: Number(modelConfig.top_p || 0.9),
+            top_k: Number(modelConfig.top_k || 50),
+            max_new_tokens: Number(modelConfig.max_tokens || 1000),
+            stopSequences: modelConfig.stop || []
+        };
+
+        // Add tool configuration if tools are present
         if (tools.length > 0) {
             requestBody.toolConfig = {
-                    tools: tools.map(tool => ({
-                        toolSpec: {
-                            name: tool?.function?.name || "",
-                            description: tool?.function?.description || "",
-                            inputSchema: {
-                                json: tool?.function?.parameters || {}
-                            }
+                tools: tools.map(tool => ({
+                    toolSpec: {
+                        name: tool?.function?.name || "",
+                        description: tool?.function?.description || "",
+                        inputSchema: {
+                            json: tool?.function?.parameters || {}
                         }
-                    })),
+                    }
+                })),
                 toolChoice: { auto: {} }
             };
         }
 
         return requestBody;
+    }
+
+    // Message content preparation and extraction
+    static prepareMessageContent(messageText, imagePreview) {
+        if (messageText && imagePreview) {
+            return [
+                { type: 'text', text: messageText },
+                { type: 'image', image_url: { url: imagePreview } }
+            ];
+        } else if (imagePreview) {
+            return [
+                { type: 'text', text: 'Here is an image:' },
+                { type: 'image', image_url: { url: imagePreview } }
+            ];
+        }
+        return messageText;
     }
 
     static getMessageTextContent(message) {
@@ -287,6 +407,60 @@ class BedrockAPI {
                 .join("\n");
         }
         return "";
+    }
+
+    static prepareRequestMessages(config, messageHistory, selectedTools = []) {
+        // Start with system prompt if configured
+        let messages = [];
+        if (config.default_system_prompt) {
+            messages.push({
+                role: 'system',
+                content: [{ type: 'text', text: config.default_system_prompt }]
+            });
+        }
+
+        // Get user and assistant messages
+        const userMessages = messageHistory.filter(msg => msg.role === 'user');
+        const assistantMessages = messageHistory.filter(msg => msg.role === 'assistant');
+        const toolMessages = messageHistory.filter(msg => msg.role === 'tool');
+
+        // Ensure we have at least one user message
+        if (userMessages.length === 0) {
+            return this.formatRequestBody(
+                messages,
+                {
+                    model: config.default_model,
+                    temperature: Number(config.default_temperature || 0.7)
+                },
+                selectedTools
+            );
+        }
+
+        // Build conversation in proper order
+        let messageIndex = 0;
+        while (messageIndex < Math.max(userMessages.length, assistantMessages.length)) {
+            // Always add user message first in each turn
+            if (messageIndex < userMessages.length) {
+                messages.push(userMessages[messageIndex]);
+            }
+            // Then add assistant response if available
+            if (messageIndex < assistantMessages.length) {
+                messages.push(assistantMessages[messageIndex]);
+            }
+            // Add any tool messages for this turn
+            const turnToolMessages = toolMessages.filter(msg => msg.turnIndex === messageIndex);
+            messages.push(...turnToolMessages);
+            messageIndex++;
+        }
+
+        return this.formatRequestBody(
+            messages,
+            {
+                model: config.default_model,
+                temperature: Number(config.default_temperature || 0.7)
+            },
+            selectedTools
+        );
     }
 
     static formatTitanRequest(messages, modelConfig) {

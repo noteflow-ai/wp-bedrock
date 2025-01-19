@@ -24,9 +24,10 @@ class BedrockChatManager {
 
         // Set up response handler callbacks
         this.responseHandler.setCallbacks({
-            onContent: (text) => this.handleStreamContent(text),
+            onContent: (data) => this.handleStreamContent(data),
             onError: (error) => this.handleError(error),
-            onComplete: () => this.handleStreamComplete()
+            onComplete: () => this.handleStreamComplete(),
+            onRetry: (retryCount, error) => this.handleRetry(retryCount, error)
         });
 
         // Initialize markdown parser
@@ -49,16 +50,13 @@ class BedrockChatManager {
 
     // Initialize chat
     initialize() {
-        // Create initial message
+        // Reset message history
+        this.messageHistory = [];
+        
+        // Create initial message UI without adding to history
         if (this.config.initial_message) {
             const message = this.createMessageElement('assistant', this.config.initial_message);
             this.elements.messagesContainer.append(message);
-            this.messageHistory.push({
-                role: 'assistant',
-                content: [{ type: 'text', text: this.config.initial_message }]
-            });
-            // Update message count immediately after adding initial message
-            this.updateMessageCount();
         }
 
         // Set placeholder
@@ -66,6 +64,8 @@ class BedrockChatManager {
             this.elements.messageInput.attr('placeholder', this.config.placeholder);
         }
 
+        // Update message count (should be 0 since initial message isn't counted)
+        this.updateMessageCount();
     }
 
     // Create message element
@@ -78,7 +78,7 @@ class BedrockChatManager {
             .append(
                 $('<div>')
                     .addClass('message-content')
-                    .html(isError ? this.formatErrorMessage(content) : this.formatMessage(content))
+                    .html(isError ? this.responseHandler.formatErrorMessage(content) : this.formatMessage(content))
             );
 
         if (role === 'assistant' && !isError) {
@@ -98,34 +98,9 @@ class BedrockChatManager {
         return messageElement;
     }
 
-    // Format message content
+    // Format message content using BedrockAPI
     formatMessage(content) {
-        if (typeof content === 'string') {
-            return this.md.render(content);
-        }
-
-        if (Array.isArray(content)) {
-            return content
-                .map(item => {
-                    if (item.type === 'text') {
-                        return this.md.render(item.text);
-                    } else if (item.type === 'image') {
-                        return `<img src="${item.url}" alt="Generated image" class="generated-image">`;
-                    }
-                    return '';
-                })
-                .join('');
-        }
-
-        return '';
-    }
-
-    // Format error message
-    formatErrorMessage(error) {
-        return `<div class="error-message">
-            <span class="dashicons dashicons-warning"></span>
-            <span class="error-text">${error}</span>
-        </div>`;
+        return BedrockAPI.formatMessageContent(content, this.md);
     }
 
     // Copy message to clipboard
@@ -150,29 +125,72 @@ class BedrockChatManager {
     }
 
     // Handle stream content
-    handleStreamContent(content) {
-        // Handle tool responses in streaming mode
-        if (typeof content === 'object' && (content.tool_calls || content.tool_use)) {
-            const toolResponse = content.tool_calls || content.tool_use;
-            this.messageHistory.push({
-                role: 'tool',
-                content: [{ type: 'text', text: JSON.stringify(toolResponse, null, 2) }]
-            });
-            return;
+    handleStreamContent(data) {
+        switch (data.type) {
+            case 'text':
+                const lastMessage = this.elements.messagesContainer.find('.chat-message:last');
+                if (lastMessage.hasClass('assistant-message')) {
+                    // Update existing assistant message
+                    const messageContent = lastMessage.find('.message-content');
+                    const currentText = messageContent.text();
+                    messageContent.html(this.formatMessage(currentText + data.content));
+                    
+                    // Update message history if this isn't the initial message
+                    const lastHistoryMessage = this.messageHistory[this.messageHistory.length - 1];
+                    if (lastHistoryMessage && lastHistoryMessage.role === 'assistant') {
+                        lastHistoryMessage.content = [{ 
+                            type: 'text', 
+                            text: currentText + data.content 
+                        }];
+                    }
+                } else {
+                    // Create new assistant message
+                    const message = this.createMessageElement('assistant', data.content);
+                    this.elements.messagesContainer.append(message);
+                    
+                    // Only add to history if we have at least one user message
+                    if (this.messageHistory.some(msg => msg.role === 'user')) {
+                        this.messageHistory.push({
+                            role: 'assistant',
+                            content: [{ type: 'text', text: data.content }]
+                        });
+                    }
+                }
+                break;
+
+            case 'tool_call':
+            case 'tool_result':
+                // Only add tool messages if we have at least one user message
+                if (this.messageHistory.some(msg => msg.role === 'user')) {
+                    this.messageHistory.push({
+                        role: 'tool',
+                        content: [{ 
+                            type: 'text', 
+                            text: JSON.stringify(data.content, null, 2) 
+                        }]
+                    });
+                }
+                const toolMessage = this.createMessageElement(
+                    'tool',
+                    JSON.stringify(data.content, null, 2)
+                );
+                this.elements.messagesContainer.append(toolMessage);
+                break;
+
+            default:
+                console.warn('[BedrockChatManager] Unknown content type:', data.type);
         }
 
-        // Handle regular text responses
-        const text = typeof content === 'object' ? content.text || JSON.stringify(content) : content;
-        const lastMessage = this.elements.messagesContainer.find('.chat-message:last');
-        
-        if (lastMessage.hasClass('assistant-message')) {
-            const messageContent = lastMessage.find('.message-content');
-            messageContent.html(this.formatMessage(messageContent.text() + text));
-        } else {
-            const message = this.createMessageElement('assistant', text);
-            this.elements.messagesContainer.append(message);
-        }
+        this.scrollToBottom();
+    }
 
+    // Handle retry attempts
+    handleRetry(retryCount, error) {
+        const retryMessage = this.createMessageElement(
+            'system',
+            `Retrying connection (attempt ${retryCount}/3)...`
+        );
+        this.elements.messagesContainer.append(retryMessage);
         this.scrollToBottom();
     }
 
@@ -185,7 +203,7 @@ class BedrockChatManager {
     // Handle error
     handleError(error) {
         console.error('[BedrockChatManager] Error:', error);
-        const errorMessage = this.createMessageElement('assistant', error.message || error, true);
+        const errorMessage = this.createMessageElement('assistant', error, true);
         this.elements.messagesContainer.append(errorMessage);
         this.setProcessingState(false);
         this.scrollToBottom();
@@ -203,112 +221,108 @@ class BedrockChatManager {
 
         // Ensure model is set
         if (!this.config.default_model) {
-            console.error('[BedrockChatManager] No model configured');
-            this.handleError('No model configured. Please check your settings.');
+            this.handleError({
+                code: 'CONFIG_ERROR',
+                message: 'No model configured. Please check your settings.'
+            });
             return;
         }
 
         try {
-            // Clear input
-            this.elements.messageInput.val('');
-            this.elements.messageInput.css('height', 'auto');
+            // Clear input and reset state
+            this.clearInput(messageText, imagePreview);
 
-            // Prepare message content
-            let messageContent;
-            
-            // Handle text and image content
-            if (messageText && imagePreview) {
-                messageContent = [
-                    { type: 'text', text: messageText },
-                    { type: 'image', image_url: { url: imagePreview } }
-                ];
-            } else if (imagePreview) {
-                messageContent = [
-                    { type: 'text', text: 'Here is an image:' },
-                    { type: 'image', image_url: { url: imagePreview } }
-                ];
-            } else {
-                messageContent = messageText;
-            }
-
-            // Clear image preview if present
-            if (imagePreview) {
-                this.elements.imagePreview.hide();
-                this.elements.imageUpload.val('');
-                this.elements.previewImage.attr('src', '');
-            }
-
-            // Add user message to UI and update message history
-            const userMessage = this.createMessageElement('user', messageContent);
-            this.elements.messagesContainer.append(userMessage);
-            this.messageHistory.push({
-                role: 'user',
-                content: messageContent
-            });
-
-            // Update message count
-            this.updateMessageCount();
+            // Prepare and add user message
+            const messageContent = BedrockAPI.prepareMessageContent(messageText, imagePreview);
+            this.addUserMessage(messageContent);
 
             // Set processing state
             this.setProcessingState(true);
 
-            // Prepare request with tools if selected
-            const requestBody = BedrockAPI.formatRequestBody(
-                this.messageHistory,
-                {
-                    model: this.config.default_model,
-                    temperature: Number(this.config.default_temperature || 0.7),
-                    system_prompt: this.config.default_system_prompt
-                },
-                this.selectedTools
-            );
+            // Prepare request
+            const requestBody = BedrockAPI.prepareRequestMessages(this.config, this.messageHistory, this.selectedTools);
 
-            // Send request
+            // Send request based on streaming configuration
             if (this.config.enable_stream) {
-                await this.responseHandler.startStreaming(
-                    `${this.config.ajaxurl}?action=wpbedrock_chat_message&stream=1&nonce=${this.config.nonce}`,
-                    requestBody
-                );
+                const streamUrl = this.getStreamUrl();
+                await this.responseHandler.startStreaming(streamUrl, requestBody);
             } else {
-                const response = await this.$.ajax({
-                    url: this.config.ajaxurl,
-                    method: 'POST',
-                    data: {
-                        action: 'wpbedrock_chat_message',
-                        nonce: this.config.nonce,
-                        requestBody: JSON.stringify(requestBody)
-                    }
-                });
-
-                if (response.success && response.data) {
-                    // Handle tool responses
-                    if (response.data.tool_calls || response.data.tool_use) {
-                        const toolResponse = response.data.tool_calls || response.data.tool_use;
-                        this.messageHistory.push({
-                            role: 'tool',
-                            content: [{ type: 'text', text: JSON.stringify(toolResponse, null, 2) }]
-                        });
-                    }
-                    
-                    // Handle regular responses
-                    const message = this.createMessageElement('assistant', response.data.content);
-                    this.elements.messagesContainer.append(message);
-                    this.messageHistory.push({
-                        role: 'assistant',
-                        content: [{ type: 'text', text: response.data.content }]
-                    });
-                    this.updateMessageCount();
-                } else {
-                    throw new Error(response.data || 'Unknown error');
-                }
-
-                this.setProcessingState(false);
+                const response = await this.sendNonStreamingRequest(requestBody);
+                await this.handleNonStreamingResponse(response);
             }
 
+        } catch (error) {
+            this.handleError(error);
+        }
+    }
+
+    // Clear input fields
+    clearInput(messageText, imagePreview) {
+        this.elements.messageInput.val('');
+        this.elements.messageInput.css('height', 'auto');
+
+        if (imagePreview) {
+            this.elements.imagePreview.hide();
+            this.elements.imageUpload.val('');
+            this.elements.previewImage.attr('src', '');
+        }
+    }
+
+    // Add user message to UI and history
+    addUserMessage(messageContent) {
+        const userMessage = this.createMessageElement('user', messageContent);
+        this.elements.messagesContainer.append(userMessage);
+        this.messageHistory.push({
+            role: 'user',
+            content: messageContent
+        });
+        this.updateMessageCount();
+    }
+
+    // Get stream URL
+    getStreamUrl() {
+        return `${this.config.ajaxurl}?action=wpbedrock_chat_message&stream=1&nonce=${this.config.nonce}`;
+    }
+
+    // Send non-streaming request
+    async sendNonStreamingRequest(requestBody) {
+        const response = await this.$.ajax({
+            url: this.config.ajaxurl,
+            method: 'POST',
+            data: {
+                action: 'wpbedrock_chat_message',
+                nonce: this.config.nonce,
+                requestBody: JSON.stringify(requestBody)
+            }
+        });
+
+        if (!response.success) {
+            throw new Error(response.data || 'Unknown error');
+        }
+
+        return response;
+    }
+
+    // Handle non-streaming response
+    async handleNonStreamingResponse(response) {
+        try {
+            if (!response || !response.success) {
+                throw new Error(response?.data || 'Invalid response from server');
+            }
+            
+            if (response.data) {
+                const normalizedResponse = await this.responseHandler.handleResponse(response.data);
+                
+                // Use handleStreamContent to ensure consistent message handling
+                this.handleStreamContent(normalizedResponse);
+                
+                // Message history is already updated by handleStreamContent
+                this.updateMessageCount();
+            }
+            this.setProcessingState(false);
             this.scrollToBottom();
         } catch (error) {
-            console.error('[BedrockChatManager] Error processing message:', error);
-            this.handleError(typeof error === 'string' ? error : error.message || 'An error occurred while processing the message');
+            this.handleError(error);
         }
     }
 
