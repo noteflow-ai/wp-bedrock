@@ -39,9 +39,6 @@ class WP_Bedrock_AWS {
         }
     }
 
-    /**
-     * Get canonical URI from path
-     */
     private function get_canonical_uri($path) {
         if (empty($path) || $path === '/') return '/';
 
@@ -78,16 +75,10 @@ class WP_Bedrock_AWS {
         return $full_url;
     }
 
-    /**
-     * Create HMAC signature
-     */
     private function create_hmac($key, $string) {
         return hash_hmac('sha256', $string, $key, true);
     }
 
-    /**
-     * Get AWS v4 signing key
-     */
     private function get_signing_key($secret_key, $date_stamp, $region, $service) {
         $k_date = $this->create_hmac('AWS4' . $secret_key, $date_stamp);
         $k_region = $this->create_hmac($k_date, $region);
@@ -254,9 +245,6 @@ class WP_Bedrock_AWS {
         throw $last_error;
     }
 
-    /**
-     * Parse event data from chunk
-     */
     private function parse_event_data($chunk) {
         $text = $chunk;
         $results = [];
@@ -336,12 +324,8 @@ class WP_Bedrock_AWS {
         return $results;
     }
 
-    /**
-     * Process streaming response
-     */
-    private function process_stream($response, $callback = null, $model_id = null, $request_body = null) {
+    private function process_stream($response, $callback = null) {
         $buffer = '';
-        $tool_call = null;
         
         while (!$response->eof()) {
             $chunk = $response->read(8192);
@@ -358,44 +342,6 @@ class WP_Bedrock_AWS {
                     $this->log_debug('Streaming response:', json_encode($message, JSON_PRETTY_PRINT));
                     $events = $this->parse_event_data($message);
                     foreach ($events as $event) {
-                        // Check for tool calls
-                        if (!$tool_call && $model_id) {
-                            // For Claude models, check the full response for tool_use
-                            if (strpos($model_id, 'anthropic.claude') !== false && isset($event['content'])) {
-                                foreach ($event['content'] as $content) {
-                                    if ($content['type'] === 'tool_use') {
-                                        $tool_call = [
-                                            'name' => $content['name'],
-                                            'args' => $content['input']
-                                        ];
-                                        break;
-                                    }
-                                }
-                            } else {
-                                $tool_call = $this->extract_tool_call($event, $model_id);
-                            }
-                            
-                            if ($tool_call && $this->supports_tools($model_id)) {
-                                try {
-                                    // Add tool ID if not present
-                                    if (!isset($tool_call['id'])) {
-                                        $tool_call['id'] = uniqid('tool_');
-                                    }
-                                    
-                                    // Use unified tool handler
-                                    $final_response = $this->handle_tool_call($tool_call, $request_body, $model_id);
-                                    $final_content = $this->extract_content($final_response, $model_id);
-                                    
-                                    if ($callback && $final_content) {
-                                        call_user_func($callback, ['output' => $final_content]);
-                                    }
-                                    return;
-                                } catch (Exception $e) {
-                                    $this->log_debug('Tool execution error: ' . $e->getMessage());
-                                }
-                            }
-                        }
-                        
                         if ($callback) {
                             call_user_func($callback, $event);
                         }
@@ -441,25 +387,7 @@ class WP_Bedrock_AWS {
             return;
         }
 
-        // Format the SSE message based on content type
-        if (isset($data['content']) && is_array($data['content'])) {
-            foreach ($data['content'] as $content) {
-                if ($content['type'] === 'text') {
-                    echo "data: " . json_encode(['text' => $content['text']]) . "\n\n";
-                } else if ($content['type'] === 'tool_use') {
-                    echo "data: " . json_encode([
-                        'type' => 'tool_call',
-                        'content' => [
-                            'name' => $content['name'],
-                            'arguments' => $content['input']
-                        ]
-                    ]) . "\n\n";
-                }
-            }
-        } else {
-            echo "data: " . json_encode($data) . "\n\n";
-        }
-        
+        echo "data: " . json_encode($data) . "\n\n";
         flush();
     }
 
@@ -501,147 +429,6 @@ class WP_Bedrock_AWS {
         }
     }
 
-    private function load_tools() {
-        $tools_json = file_get_contents(WPBEDROCK_PLUGIN_DIR . 'includes/tools.json');
-        if (!$tools_json) {
-            throw new Exception('Failed to load tools definition');
-        }
-        return json_decode($tools_json, true)['tools'];
-    }
-
-    private function find_tool($tools, $tool_name) {
-        foreach ($tools as $tool) {
-            if (strtolower($tool['info']['title']) === str_replace('_', ' ', $tool_name)) {
-                return $tool;
-            }
-        }
-        throw new Exception('Unknown tool: ' . $tool_name);
-    }
-
-    /**
-     * Handle tool execution
-     */
-    private function handle_tool_execution($tool_name, $args) {
-        try {
-            // Load tool definitions
-            $tools = $this->load_tools();
-            $tool = $this->find_tool($tools, $tool_name);
-
-            // Get server URL and path
-            $base_url = $tool['servers'][0]['url'];
-            $path = array_key_first($tool['paths']);
-            $operation = $tool['paths'][$path][array_key_first($tool['paths'][$path])];
-
-            // Validate required parameters
-            if (isset($operation['parameters'])) {
-                foreach ($operation['parameters'] as $param) {
-                    if (isset($param['required']) && $param['required'] && !isset($args[$param['name']])) {
-                        throw new Exception("Missing required parameter: {$param['name']}");
-                    }
-                }
-            }
-
-            // Process parameters based on OpenAPI spec
-            $query_params = array();
-            $body_params = array();
-            $path_params = array();
-            $header_params = array();
-
-            if (isset($operation['parameters'])) {
-                foreach ($operation['parameters'] as $param) {
-                    if (!isset($args[$param['name']])) {
-                        if (isset($param['required']) && $param['required']) {
-                            throw new Exception("Missing required parameter: {$param['name']}");
-                        }
-                        continue;
-                    }
-
-                    $value = $args[$param['name']];
-                    
-                    // Add parameter to appropriate location
-                    switch ($param['in']) {
-                        case 'query':
-                            $query_params[$param['name']] = $value;
-                            break;
-                        case 'path':
-                            $path_params[$param['name']] = $value;
-                            break;
-                        case 'header':
-                            $header_params[$param['name']] = $value;
-                            break;
-                        case 'body':
-                            $body_params = array_merge($body_params, $value);
-                            break;
-                    }
-                }
-            }
-
-            // Build URL with path parameters
-            $url = $base_url . $path;
-            foreach ($path_params as $key => $value) {
-                $url = str_replace('{' . $key . '}', urlencode($value), $url);
-            }
-
-            // Build request options
-            $request_options = array(
-                'method' => strtoupper(array_key_first($tool['paths'][$path])),
-                'headers' => array_merge(
-                    array(
-                        'Accept' => 'application/json, application/xml;q=0.9, text/plain;q=0.8',
-                        'User-Agent' => 'WP-Bedrock/1.0'
-                    ),
-                    $header_params
-                )
-            );
-
-            // Add body if needed
-            if (!empty($body_params)) {
-                $request_options['body'] = json_encode($body_params);
-                $request_options['headers']['Content-Type'] = 'application/json';
-            }
-
-            // Make request
-            $response = wp_remote_request(
-                add_query_arg($query_params, $url),
-                $request_options
-            );
-
-            if (is_wp_error($response)) {
-                throw new Exception('Request failed: ' . $response->get_error_message());
-            }
-
-            // Get response content type and body
-            $content_type = wp_remote_retrieve_header($response, 'content-type');
-            $body = wp_remote_retrieve_body($response);
-
-            // Parse response based on content type
-            if (empty($body)) {
-                return null;
-            } else if (strpos($content_type, 'application/json') !== false) {
-                $result = json_decode($body, true);
-                if (json_last_error() !== JSON_ERROR_NONE) {
-                    throw new Exception('Invalid JSON response');
-                }
-                return $result;
-            } else if (strpos($content_type, 'application/xml') !== false || strpos($content_type, 'text/xml') !== false) {
-                $xml = simplexml_load_string($body);
-                if (!$xml) {
-                    throw new Exception('Invalid XML response');
-                }
-                return json_decode(json_encode($xml), true);
-            } else {
-                return $body;
-            }
-        } catch (Exception $e) {
-            error_log('[WP Bedrock] Tool execution error: ' . $e->getMessage());
-            throw $e;
-        }
-    }
-
-    public function execute_tool($tool_name, $args) {
-        return $this->handle_tool_execution($tool_name, $args);
-    }
-
     public function handle_chat_message($request_data) {
         try {
             $request_body = json_decode(stripslashes($request_data['requestBody'] ?? '{}'), true);
@@ -655,64 +442,20 @@ class WP_Bedrock_AWS {
             if ($stream) {
                 $this->setup_stream_environment();
                 
-                $this->invoke_model($request_body, $model_id, true, function($chunk) use ($model_id, $request_body) {
-                    // Check for tool_use in the chunk
-                    if (isset($chunk['content'])) {
-                        foreach ($chunk['content'] as $content) {
-                            if ($content['type'] === 'tool_use') {
-                                try {
-                                    $tool_call = [
-                                        'name' => $content['name'],
-                                        'args' => $content['input'],
-                                        'id' => isset($content['id']) ? $content['id'] : null
-                                    ];
-                                    
-                                    // Execute tool and get result using unified handler
-                                    $final_response = $this->handle_tool_call($tool_call, $request_body, $model_id);
-                                    $final_content = $this->extract_content($final_response, $model_id);
-                                    
-                                    if ($final_content) {
-                                        $this->send_sse_message(['text' => $final_content]);
-                                    }
-                                    return;
-                                } catch (Exception $e) {
-                                    $this->log_debug('Tool execution error: ' . $e->getMessage());
-                                }
-                            } else if ($content['type'] === 'text') {
-                                $this->send_sse_message(['text' => $content['text']]);
-                            }
-                        }
-                    } else {
-                        $content = $this->extract_content($chunk, $model_id);
-                        if ($content) {
-                            $this->send_sse_message(['text' => $content]);
-                        }
+                $this->invoke_model($request_body, $model_id, true, function($chunk) use ($model_id) {
+                    $content = $this->extract_content($chunk, $model_id);
+                    if ($content) {
+                        $this->send_sse_message(['text' => $content]);
                     }
-                }, $request_body);
+                });
                 
                 $this->send_sse_message(['done' => true]);
                 exit;
             } else {
                 $response = $this->invoke_model($request_body, $model_id);
-                
-                // Check for tool calls in the response
-                if ($this->supports_tools($model_id)) {
-                    $tool_call = $this->extract_tool_call($response, $model_id);
-                    if ($tool_call) {
-                        try {
-                            // Use unified tool handler
-                            $response = $this->handle_tool_call($tool_call, $request_body, $model_id);
-                        } catch (Exception $e) {
-                            $this->log_debug('Tool execution error: ' . $e->getMessage());
-                        }
-                    }
-                }
-
-                // Extract the final content
-                $content = $this->extract_content($response, $model_id);
                 return [
                     'success' => true,
-                    'content' => $content
+                    'data' => $response
                 ];
             }
         } catch (Exception $e) {
@@ -725,142 +468,7 @@ class WP_Bedrock_AWS {
         }
     }
 
-    private function extract_tool_call($response, $model_id) {
-        try {
-            if (strpos($model_id, 'anthropic.claude') !== false) {
-                // Check for tool_use in response
-                if (isset($response['content'])) {
-                    foreach ($response['content'] as $content) {
-                        if ($content['type'] === 'tool_use') {
-                            return [
-                                'name' => $content['name'],
-                                'args' => $content['input']
-                            ];
-                        }
-                    }
-                }
-            } elseif (strpos($model_id, 'mistral.mistral') !== false) {
-                if (isset($response['tool_calls'][0])) {
-                    return [
-                        'name' => $response['tool_calls'][0]['function']['name'],
-                        'args' => json_decode($response['tool_calls'][0]['function']['arguments'], true)
-                    ];
-                }
-            } elseif (strpos($model_id, 'us.amazon.nova') !== false) {
-                if (isset($response['content']) && is_array($response['content'])) {
-                    foreach ($response['content'] as $content) {
-                        if ($content['type'] === 'tool_use') {
-                            return [
-                                'name' => $content['name'],
-                                'args' => $content['input']
-                            ];
-                        }
-                    }
-                }
-            }
-        } catch (Exception $e) {
-            $this->log_debug('Tool call extraction error: ' . $e->getMessage());
-        }
-        return null;
-    }
-
-    /**
-     * Check if model supports tools
-     */
-    private function supports_tools($model_id) {
-        return (
-            strpos($model_id, 'anthropic.claude-3') !== false ||
-            strpos($model_id, 'anthropic.claude-3.5') !== false ||
-            strpos($model_id, 'us.amazon.nova') !== false ||
-            strpos($model_id, 'mistral.mistral') !== false
-        );
-    }
-
-    /**
-     * Handle tool call and get result
-     */
-    private function handle_tool_call($tool_call, $request_body, $model_id) {
-        try {
-            // Execute tool and get result
-            $tool_result = $this->handle_tool_execution($tool_call['name'], $tool_call['args']);
-            
-            // Add tool call and result to conversation based on model type
-            if (strpos($model_id, 'anthropic.claude') !== false) {
-                // Claude format
-                $request_body['messages'][] = array(
-                    'role' => 'assistant',
-                    'content' => array(array(
-                        'type' => 'tool_use',
-                        'id' => isset($tool_call['id']) ? $tool_call['id'] : uniqid('tool_'),
-                        'name' => $tool_call['name'],
-                        'input' => $tool_call['args']
-                    ))
-                );
-                $request_body['messages'][] = array(
-                    'role' => 'user',
-                    'content' => array(array(
-                        'type' => 'tool_result',
-                        'tool_use_id' => isset($tool_call['id']) ? $tool_call['id'] : uniqid('tool_'),
-                        'content' => $tool_result
-                    ))
-                );
-            } elseif (strpos($model_id, 'mistral.mistral') !== false) {
-                // Mistral format
-                $request_body['messages'][] = array(
-                    'role' => 'assistant',
-                    'content' => '',
-                    'tool_calls' => array(array(
-                        'id' => isset($tool_call['id']) ? $tool_call['id'] : uniqid('tool_'),
-                        'function' => array(
-                            'name' => $tool_call['name'],
-                            'arguments' => json_encode($tool_call['args'])
-                        )
-                    ))
-                );
-                $request_body['messages'][] = array(
-                    'role' => 'tool',
-                    'tool_call_id' => isset($tool_call['id']) ? $tool_call['id'] : uniqid('tool_'),
-                    'content' => $tool_result
-                );
-            } elseif (strpos($model_id, 'us.amazon.nova') !== false) {
-                // Nova format
-                $request_body['messages'][] = array(
-                    'role' => 'assistant',
-                    'content' => array(
-                        array(
-                            'type' => 'text',
-                            'text' => ''
-                        ),
-                        array(
-                            'type' => 'tool_use',
-                            'name' => $tool_call['name'],
-                            'input' => $tool_call['args']
-                        )
-                    )
-                );
-                $request_body['messages'][] = array(
-                    'role' => 'user',
-                    'content' => array(
-                        array(
-                            'type' => 'tool_result',
-                            'text' => json_encode($tool_result)
-                        )
-                    )
-                );
-            }
-
-            // Get final response with tool results
-            return $this->invoke_model($request_body, $model_id);
-        } catch (Exception $e) {
-            $this->log_debug('Tool execution error: ' . $e->getMessage());
-            throw $e;
-        }
-    }
-
-    /**
-     * Invoke model with request
-     */
-    public function invoke_model($request_body, $model_id, $stream = false, $callback = null, $original_request = null) {
+    public function invoke_model($request_body, $model_id, $stream = false, $callback = null) {
         try {
             $this->log_debug('Request:', [
                 'model_id' => $model_id,
@@ -874,7 +482,7 @@ class WP_Bedrock_AWS {
                 $response = $this->execute_with_retry(function() use ($url, $request_body) {
                     return $this->make_request($url, 'POST', $request_body, true);
                 });
-                $this->process_stream($response, $callback, $model_id, $original_request);
+                $this->process_stream($response, $callback);
                 return null;
             } else {
                 $response = $this->execute_with_retry(function() use ($url, $request_body) {

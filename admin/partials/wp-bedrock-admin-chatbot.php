@@ -2,7 +2,7 @@
 if (!defined('ABSPATH')) exit;
 ?>
 <div class="wrap">
-    <h1>AI Chatbot</h1>
+    <h1>AI Chat</h1>
     
     <div class="wp-bedrock-settings-container">
         <div class="settings-section">

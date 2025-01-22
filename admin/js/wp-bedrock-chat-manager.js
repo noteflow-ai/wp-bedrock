@@ -22,13 +22,22 @@ class BedrockChatManager {
         this.api = new BedrockAPI();
         this.responseHandler = new BedrockResponseHandler();
 
-        // Set up response handler callbacks
-        this.responseHandler.setCallbacks({
-            onContent: (data) => this.handleStreamContent(data),
-            onError: (error) => this.handleError(error),
-            onComplete: () => this.handleStreamComplete(),
-            onRetry: (retryCount, error) => this.handleRetry(retryCount, error)
-        });
+        // Set up response handler callbacks based on streaming configuration
+        if (this.config.enable_stream) {
+            this.responseHandler.setCallbacks({
+                onContent: (data) => this.handleStreamContent(data),
+                onError: (error) => this.handleError(error),
+                onComplete: () => this.handleStreamComplete(),
+                onRetry: (retryCount, error) => this.handleRetry(retryCount, error),
+                onToolCall: (toolCall) => this.handleToolCall(toolCall),
+                onToolResult: (toolResult) => this.handleToolResult(toolResult)
+            });
+        } else {
+            // For non-streaming mode, we only need error handling
+            this.responseHandler.setCallbacks({
+                onError: (error) => this.handleError(error)
+            });
+        }
 
         // Initialize markdown parser
         this.md = window.markdownit({
@@ -70,16 +79,23 @@ class BedrockChatManager {
 
     // Create message element
     createMessageElement(role, content, isError = false) {
-        const messageClass = role === 'assistant' ? 'assistant-message' : 'user-message';
         const $ = this.$;
-
         const messageElement = $('<div>')
-            .addClass(`chat-message ${messageClass}`)
+            .addClass('chat-message')
+            .addClass(role === 'assistant' ? 'ai' : (role === 'user' ? 'user' : 'tool'))
             .append(
                 $('<div>')
                     .addClass('message-content')
                     .html(isError ? this.responseHandler.formatErrorMessage(content) : this.formatMessage(content))
             );
+
+        // Add image preview styles
+        messageElement.find('img.generated-image').css({
+            'max-width': '200px',
+            'max-height': '200px',
+            'object-fit': 'contain',
+            'border-radius': '4px'
+        });
 
         if (role === 'assistant' && !isError) {
             messageElement.append(
@@ -124,57 +140,35 @@ class BedrockChatManager {
         }
     }
 
-    // Handle stream content
+    // Handle stream content with improved tool handling
     handleStreamContent(data) {
+        console.log('[BedrockChatManager] Stream content:', data);
+        
+        // Ensure data is properly structured
+        if (!data || !data.type) {
+            console.warn('[BedrockChatManager] Invalid content data:', data);
+            return;
+        }
+        
         switch (data.type) {
             case 'text':
-                const lastMessage = this.elements.messagesContainer.find('.chat-message:last');
-                if (lastMessage.hasClass('assistant-message')) {
-                    // Update existing assistant message
-                    const messageContent = lastMessage.find('.message-content');
-                    const currentText = messageContent.text();
-                    messageContent.html(this.formatMessage(currentText + data.content));
-                    
-                    // Update message history if this isn't the initial message
-                    const lastHistoryMessage = this.messageHistory[this.messageHistory.length - 1];
-                    if (lastHistoryMessage && lastHistoryMessage.role === 'assistant') {
-                        lastHistoryMessage.content = [{ 
-                            type: 'text', 
-                            text: currentText + data.content 
-                        }];
-                    }
-                } else {
-                    // Create new assistant message
-                    const message = this.createMessageElement('assistant', data.content);
-                    this.elements.messagesContainer.append(message);
-                    
-                    // Only add to history if we have at least one user message
-                    if (this.messageHistory.some(msg => msg.role === 'user')) {
-                        this.messageHistory.push({
-                            role: 'assistant',
-                            content: [{ type: 'text', text: data.content }]
-                        });
-                    }
+                // Ensure content is a string
+                if (typeof data.content === 'object') {
+                    data = {
+                        type: 'text',
+                        content: data.content.text || data.content.content || '',
+                        role: data.role || 'assistant'
+                    };
                 }
+                this.handleTextContent(data);
                 break;
 
             case 'tool_call':
+                this.handleToolCall(data.content);
+                break;
+
             case 'tool_result':
-                // Only add tool messages if we have at least one user message
-                if (this.messageHistory.some(msg => msg.role === 'user')) {
-                    this.messageHistory.push({
-                        role: 'tool',
-                        content: [{ 
-                            type: 'text', 
-                            text: JSON.stringify(data.content, null, 2) 
-                        }]
-                    });
-                }
-                const toolMessage = this.createMessageElement(
-                    'tool',
-                    JSON.stringify(data.content, null, 2)
-                );
-                this.elements.messagesContainer.append(toolMessage);
+                this.handleToolResult(data.content);
                 break;
 
             default:
@@ -182,6 +176,126 @@ class BedrockChatManager {
         }
 
         this.scrollToBottom();
+    }
+
+    // Handle text content
+    handleTextContent(data) {
+        const content = typeof data.content === 'object' ? data.content.text || data.content.content || '' : data.content || '';
+        const role = data.role || 'assistant';
+        
+        console.log('[BedrockChatManager] Handling text content:', { content, role });
+
+        const lastMessage = this.elements.messagesContainer.find('.chat-message:last');
+        if (lastMessage.hasClass('ai') && role === 'assistant') {
+            // Update existing assistant message
+            const messageContent = lastMessage.find('.message-content');
+            const currentText = messageContent.text();
+            messageContent.html(this.formatMessage(currentText + content));
+            
+            // Update message history if this isn't the initial message
+            const lastHistoryMessage = this.messageHistory[this.messageHistory.length - 1];
+            if (lastHistoryMessage && lastHistoryMessage.role === 'assistant') {
+                lastHistoryMessage.content = [{ 
+                    type: 'text', 
+                    text: currentText + content 
+                }];
+            }
+        } else if (content) { // Only create new message if we have content
+            // Create new message
+            const message = this.createMessageElement(role, content);
+            this.elements.messagesContainer.append(message);
+            
+            // Only add to history if we have at least one user message
+            if (this.messageHistory.some(msg => msg.role === 'user')) {
+                this.messageHistory.push({
+                    role: role,
+                    content: [{ type: 'text', text: content }]
+                });
+            }
+        }
+    }
+
+    // Handle tool call
+    handleToolCall(toolCall) {
+        // Format tool call for display
+        const formattedToolCall = {
+            type: 'tool_call',
+            name: toolCall.name,
+            arguments: toolCall.arguments
+        };
+
+        // Create tool call message element
+        const message = this.createMessageElement(
+            'tool',
+            this.formatToolMessage(formattedToolCall)
+        );
+        this.elements.messagesContainer.append(message);
+
+        // Add to message history with turn tracking
+        if (this.messageHistory.some(msg => msg.role === 'user')) {
+            this.messageHistory.push({
+                role: 'tool',
+                turnIndex: this.getCurrentTurnIndex(),
+                content: [{ 
+                    type: 'tool_call',
+                    tool: toolCall.name,
+                    arguments: toolCall.arguments
+                }]
+            });
+        }
+    }
+
+    // Handle tool result
+    handleToolResult(toolResult) {
+        // Format tool result for display
+        const formattedToolResult = {
+            type: 'tool_result',
+            name: toolResult.name,
+            result: toolResult.result
+        };
+
+        // Create tool result message element
+        const message = this.createMessageElement(
+            'tool',
+            this.formatToolMessage(formattedToolResult)
+        );
+        this.elements.messagesContainer.append(message);
+
+        // Add to message history with turn tracking
+        if (this.messageHistory.some(msg => msg.role === 'user')) {
+            this.messageHistory.push({
+                role: 'tool',
+                turnIndex: this.getCurrentTurnIndex(),
+                content: [{ 
+                    type: 'tool_result',
+                    tool: toolResult.name,
+                    result: toolResult.result
+                }]
+            });
+        }
+    }
+
+    // Format tool message for display
+    formatToolMessage(toolData) {
+        const type = toolData.type === 'tool_call' ? 'Tool Call' : 'Tool Result';
+        const content = toolData.type === 'tool_call' ? 
+            `Arguments: ${JSON.stringify(toolData.arguments, null, 2)}` :
+            `Result: ${JSON.stringify(toolData.result, null, 2)}`;
+
+        return `<div class="tool-message">
+            <div class="tool-header">
+                <span class="tool-type">${type}</span>
+                <span class="tool-name">${toolData.name}</span>
+            </div>
+            <pre class="tool-content"><code>${content}</code></pre>
+        </div>`;
+    }
+
+    // Get current turn index
+    getCurrentTurnIndex() {
+        return Math.floor(this.messageHistory.filter(msg => 
+            msg.role === 'user' || msg.role === 'assistant'
+        ).length / 2);
     }
 
     // Handle retry attempts
@@ -213,8 +327,11 @@ class BedrockChatManager {
     async sendMessage() {
         if (this.isProcessing) return;
 
-        const messageText = this.elements.messageInput.val().trim();
+        // Get message text and ensure it's a string
+        const messageText = String(this.elements.messageInput.val() || '').trim();
         const imagePreview = this.elements.previewImage.attr('src');
+        
+        console.log('[BedrockChatManager] Sending message:', { messageText, imagePreview });
         
         // Return if no content to send
         if (!messageText && !imagePreview) return;
@@ -229,12 +346,15 @@ class BedrockChatManager {
         }
 
         try {
+            // Prepare message content before clearing input
+            const messageContent = BedrockAPI.prepareMessageContent(messageText, imagePreview);
+            console.log('[BedrockChatManager] Prepared content:', messageContent);
+
+            // Add user message to UI and history
+            this.addUserMessage(messageContent);
+            
             // Clear input and reset state
             this.clearInput(messageText, imagePreview);
-
-            // Prepare and add user message
-            const messageContent = BedrockAPI.prepareMessageContent(messageText, imagePreview);
-            this.addUserMessage(messageContent);
 
             // Set processing state
             this.setProcessingState(true);
@@ -270,12 +390,35 @@ class BedrockChatManager {
 
     // Add user message to UI and history
     addUserMessage(messageContent) {
+        // Create message element with proper formatting
         const userMessage = this.createMessageElement('user', messageContent);
         this.elements.messagesContainer.append(userMessage);
+
+        // Format message content for history
+        let historyContent = Array.isArray(messageContent) ? messageContent : [messageContent];
+        
+        // Ensure each content item has proper type and format
+        historyContent = historyContent.map(item => {
+            if (typeof item === 'string') {
+                return { type: 'text', text: item };
+            }
+            if (item.type === 'image' && item.image_url) {
+                return {
+                    type: 'image',
+                    image_url: {
+                        url: item.image_url.url
+                    }
+                };
+            }
+            return item;
+        });
+
+        // Add to message history
         this.messageHistory.push({
             role: 'user',
-            content: messageContent
+            content: historyContent
         });
+        
         this.updateMessageCount();
     }
 
@@ -311,14 +454,44 @@ class BedrockChatManager {
             }
             
             if (response.data) {
-                const normalizedResponse = await this.responseHandler.handleResponse(response.data);
+                let content = '';
                 
-                // Use handleStreamContent to ensure consistent message handling
-                this.handleStreamContent(normalizedResponse);
+                // For Nova responses
+                if (response.data.output?.message) {
+                    content = response.data.output.message.content?.[0]?.text || '';
+                }
+                // For Llama responses
+                else if (response.data.generation) {
+                    content = response.data.generation;
+                }
+                // For Mistral responses
+                else if (response.data.choices?.[0]?.message?.content) {
+                    content = response.data.choices[0].message.content;
+                }
+                // For Claude responses
+                else if (response.data.content) {
+                    content = Array.isArray(response.data.content) 
+                        ? response.data.content.map(item => item.text || '').join('')
+                        : response.data.content;
+                }
                 
-                // Message history is already updated by handleStreamContent
-                this.updateMessageCount();
+                if (content) {
+                    // Create new message
+                    const messageElement = this.createMessageElement('assistant', content);
+                    this.elements.messagesContainer.append(messageElement);
+                    
+                    // Add to message history
+                    if (this.messageHistory.some(msg => msg.role === 'user')) {
+                        this.messageHistory.push({
+                            role: 'assistant',
+                            content: [{ type: 'text', text: content }]
+                        });
+                    }
+                    
+                    this.updateMessageCount();
+                }
             }
+            
             this.setProcessingState(false);
             this.scrollToBottom();
         } catch (error) {

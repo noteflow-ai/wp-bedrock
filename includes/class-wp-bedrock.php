@@ -2,7 +2,6 @@
 namespace WPBEDROCK;
 
 class WP_Bedrock {
-    private $tools;
     private $plugin_name;
     private $version;
     private $admin;
@@ -25,8 +24,6 @@ class WP_Bedrock {
     private function setup_hooks() {
         add_action('wp_ajax_wpbedrock_chat', array($this, 'handle_chat_request'));
         add_action('wp_ajax_nopriv_wpbedrock_chat', array($this, 'handle_chat_request'));
-        add_action('wp_ajax_wpbedrock_tool', array($this, 'handle_tool_request'));
-        add_action('wp_ajax_nopriv_wpbedrock_tool', array($this, 'handle_tool_request'));
     }
 
     public function handle_chat_request() {
@@ -95,41 +92,6 @@ class WP_Bedrock {
                 wp_send_json_error($error_response);
             }
         }
-    }
-
-    public function handle_tool_request() {
-        try {
-            check_ajax_referer('wpbedrock_chat_nonce', 'nonce');
-
-            $tool_name = sanitize_text_field($_POST['tool'] ?? '');
-            $parameters = json_decode(stripslashes($_POST['parameters'] ?? '{}'), true);
-
-            if (empty($tool_name)) {
-                throw new \Exception('Tool name is required', 'INVALID_REQUEST');
-            }
-
-            if (!is_array($parameters)) {
-                throw new \Exception('Invalid parameters format', 'INVALID_REQUEST');
-            }
-
-            $result = $this->tools->execute_tool($tool_name, $parameters);
-            
-            wp_send_json_success([
-                'type' => 'tool_result',
-                'content' => $result
-            ]);
-
-        } catch (\Exception $e) {
-            wp_send_json_error([
-                'error' => true,
-                'code' => $e->getCode() ?: 'TOOL_ERROR',
-                'message' => $e->getMessage()
-            ]);
-        }
-    }
-
-    public function get_tools() {
-        return $this->tools->get_tools();
     }
 
     /**

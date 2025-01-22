@@ -61,7 +61,7 @@ class BedrockAPI {
         }
     }
 
-    // Format message for display
+    // Format message for display with tool support
     static formatMessageContent(content, md) {
         if (typeof content === 'string') {
             return md.render(content);
@@ -70,17 +70,56 @@ class BedrockAPI {
         if (Array.isArray(content)) {
             return content
                 .map(item => {
-                    if (item.type === 'text') {
-                        return md.render(item.text);
-                    } else if (item.type === 'image') {
-                        return `<img src="${item.url}" alt="Generated image" class="generated-image">`;
+                    switch (item.type) {
+                        case 'text':
+                            return md.render(item.text);
+                        case 'image':
+                            const imageUrl = item.image_url?.url || item.url;
+                            return `<img src="${imageUrl}" alt="Generated image" class="generated-image">`;
+                        case 'tool_call':
+                            return this.formatToolCall(item);
+                        case 'tool_result':
+                            return this.formatToolResult(item);
+                        default:
+                            return '';
                     }
-                    return '';
                 })
                 .join('');
         }
 
+        // Handle tool-specific content objects
+        if (content && typeof content === 'object') {
+            if (content.type === 'tool_call') {
+                return this.formatToolCall(content);
+            }
+            if (content.type === 'tool_result') {
+                return this.formatToolResult(content);
+            }
+        }
+
         return '';
+    }
+
+    // Format tool call for display
+    static formatToolCall(toolCall) {
+        return `<div class="tool-message tool-call">
+            <div class="tool-header">
+                <span class="tool-type">Tool Call</span>
+                <span class="tool-name">${toolCall.name || toolCall.content?.name || ''}</span>
+            </div>
+            <pre class="tool-content"><code>${JSON.stringify(toolCall.arguments || toolCall.content?.arguments || {}, null, 2)}</code></pre>
+        </div>`;
+    }
+
+    // Format tool result for display
+    static formatToolResult(toolResult) {
+        return `<div class="tool-message tool-result">
+            <div class="tool-header">
+                <span class="tool-type">Tool Result</span>
+                <span class="tool-name">${toolResult.name || toolResult.content?.name || ''}</span>
+            </div>
+            <pre class="tool-content"><code>${JSON.stringify(toolResult.result || toolResult.content?.result || {}, null, 2)}</code></pre>
+        </div>`;
     }
 
     // Role mappers for different models
@@ -97,13 +136,22 @@ class BedrockAPI {
         assistant: "assistant"
     };
 
-    // Normalize messages to ensure model-specific requirements are met
+    // Normalize messages to ensure model-specific requirements are met with enhanced tool handling
     static normalizeMessages(messages, model) {
-        // Start with system messages
+        // Group messages by role
         const systemMessages = messages.filter(msg => msg.role === 'system');
         const userMessages = messages.filter(msg => msg.role === 'user');
         const assistantMessages = messages.filter(msg => msg.role === 'assistant');
         const toolMessages = messages.filter(msg => msg.role === 'tool');
+
+        // Process tool messages to ensure proper format
+        const processedToolMessages = toolMessages.map(msg => {
+            if (!msg.turnIndex) {
+                // If no turn index, try to infer it from message position
+                msg.turnIndex = Math.floor(messages.indexOf(msg) / 2);
+            }
+            return this.normalizeToolMessage(msg);
+        });
         
         let normalizedMessages = [];
 
@@ -317,13 +365,22 @@ class BedrockAPI {
 
         // Format conversation messages
         requestBody.messages = conversationMessages.map(message => {
-            const formattedContent = Array.isArray(message.content)
-                ? message.content.map(item => {
-                    if (item.text || typeof item === "string") {
-                        return {
-                            text: item.text || item
-                        };
+            let formattedContent;
+            
+            // Handle array content
+            if (Array.isArray(message.content)) {
+                formattedContent = message.content.map(item => {
+                    // Handle string items
+                    if (typeof item === "string") {
+                        return { text: item };
                     }
+                    
+                    // Handle text content
+                    if (item.text || item.type === "text") {
+                        return { text: item.text || "" };
+                    }
+                    
+                    // Handle image content
                     if (item.image_url?.url) {
                         const { url = "" } = item.image_url;
                         if (url.startsWith('data:')) {
@@ -341,10 +398,22 @@ class BedrockAPI {
                         }
                     }
                     return null;
-                }).filter(Boolean)
-                : [{
-                    text: this.getMessageTextContent(message)
+                }).filter(Boolean);
+            } else {
+                // Handle string content with proper encoding
+                const messageText = typeof message.content === "string" ? 
+                    message.content : 
+                    this.getMessageTextContent(message);
+                
+                formattedContent = [{
+                    text: messageText || " " // Ensure non-empty content with proper encoding
                 }];
+            }
+
+            // Ensure we have valid content
+            if (!formattedContent || formattedContent.length === 0) {
+                formattedContent = [{ text: " " }]; // Space to ensure non-empty content
+            }
 
             return {
                 role: message.role,
@@ -360,6 +429,9 @@ class BedrockAPI {
             max_new_tokens: Number(modelConfig.max_tokens || 1000),
             stopSequences: modelConfig.stop || []
         };
+
+        // Log the request for debugging
+        console.log('[BedrockAPI] Nova request:', JSON.stringify(requestBody, null, 2));
 
         // Add tool configuration if tools are present
         if (tools.length > 0) {
@@ -380,20 +452,86 @@ class BedrockAPI {
         return requestBody;
     }
 
-    // Message content preparation and extraction
-    static prepareMessageContent(messageText, imagePreview) {
-        if (messageText && imagePreview) {
-            return [
-                { type: 'text', text: messageText },
-                { type: 'image', image_url: { url: imagePreview } }
-            ];
-        } else if (imagePreview) {
-            return [
-                { type: 'text', text: 'Here is an image:' },
-                { type: 'image', image_url: { url: imagePreview } }
-            ];
+    // Message content preparation and extraction with tool support
+    static prepareMessageContent(messageText, imagePreview, toolData = null) {
+        const content = [];
+
+        // Add text content if present
+        if (messageText) {
+            content.push({ type: 'text', text: messageText });
         }
-        return messageText;
+
+        // Add image content if present
+        if (imagePreview) {
+            if (!messageText) {
+                content.push({ type: 'text', text: 'Here is an image:' });
+            }
+            content.push({ type: 'image', image_url: { url: imagePreview } });
+        }
+
+        // Add tool data if present
+        if (toolData) {
+            content.push(this.normalizeToolMessage(toolData));
+        }
+
+        // Always return an array for Nova format consistency
+        return content;
+    }
+
+    // Normalize tool message format
+    static normalizeToolMessage(message) {
+        if (typeof message.content === 'string') {
+            try {
+                message.content = JSON.parse(message.content);
+            } catch (e) {
+                console.warn('[BedrockAPI] Failed to parse tool message content:', e);
+            }
+        }
+
+        if (Array.isArray(message.content)) {
+            message.content = message.content[0];
+        }
+
+        const content = message.content || {};
+        
+        if (content.type === 'tool_call') {
+            return {
+                ...message,
+                content: {
+                    type: 'tool_call',
+                    name: content.tool || content.name,
+                    arguments: content.arguments || {}
+                }
+            };
+        }
+
+        if (content.type === 'tool_result') {
+            return {
+                ...message,
+                content: {
+                    type: 'tool_result',
+                    name: content.tool || content.name,
+                    result: content.result
+                }
+            };
+        }
+
+        // Handle legacy format
+        if (content.tool || content.name) {
+            return {
+                ...message,
+                content: {
+                    type: message.role === 'tool' ? 'tool_result' : 'tool_call',
+                    name: content.tool || content.name,
+                    ...(message.role === 'tool' ? 
+                        { result: content.result || content } :
+                        { arguments: content.arguments || {} }
+                    )
+                }
+            };
+        }
+
+        return message;
     }
 
     static getMessageTextContent(message) {

@@ -51,8 +51,8 @@ class WP_Bedrock_Admin {
 
     public function add_plugin_admin_menu() {
         add_menu_page(
-            'AI Chat for Amazon Bedrock',
-            'AI Chat for Amazon Bedrock',
+            'WP Bedrock',
+            'WP Bedrock',
             'manage_options',
             'wp-bedrock',
             array($this, 'display_plugin_setup_page'),
@@ -64,20 +64,20 @@ class WP_Bedrock_Admin {
 
         add_submenu_page(
             'wp-bedrock',
-            'Settings',
-            'Settings',
-            'manage_options',
-            'wp-bedrock_settings',
-            array($this, 'display_settings_page')
-        );
-
-        add_submenu_page(
-            'wp-bedrock',
             'AI Chat',
             'AI Chat',
             'manage_options',
             'wp-bedrock_chatbot',
             array($this, 'display_chatbot_page')
+        );
+
+        add_submenu_page(
+            'wp-bedrock',
+            'Settings',
+            'Settings',
+            'manage_options',
+            'wp-bedrock_settings',
+            array($this, 'display_settings_page')
         );
 
         // add_submenu_page(
@@ -205,7 +205,7 @@ class WP_Bedrock_Admin {
         try {
             $result = $this->get_aws_client()->handle_chat_message($_REQUEST);
             if ($result['success']) {
-                wp_send_json_success(['content' => $result['content']]);
+                wp_send_json_success($result['data']);
             } else {
                 wp_send_json_error($result['error']);
             }

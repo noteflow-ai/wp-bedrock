@@ -1,5 +1,5 @@
 /**
- * Response handler for managing API responses and streaming
+ * Response handler for managing API responses, streaming, and tool use
  */
 class BedrockResponseHandler {
     constructor() {
@@ -7,19 +7,23 @@ class BedrockResponseHandler {
         this.streamBuffer = '';
         this.retryCount = 0;
         this.maxRetries = 3;
-        this.timeout = 30000; // 30 seconds timeout
+        this.timeout = 30000;
         this.timeoutId = null;
+        this.pendingToolCalls = new Map();
         this.callbacks = {
             onContent: null,
             onError: null,
             onComplete: null,
-            onRetry: null
+            onRetry: null,
+            onToolCall: null,
+            onToolResult: null
         };
+        this._lastRequest = null;
     }
 
-    // Set callback handlers
     setCallbacks({ onContent, onError, onComplete, onRetry }) {
         this.callbacks = {
+            ...this.callbacks,
             onContent: onContent || this.callbacks.onContent,
             onError: onError || this.callbacks.onError,
             onComplete: onComplete || this.callbacks.onComplete,
@@ -27,16 +31,7 @@ class BedrockResponseHandler {
         };
     }
 
-    // Reset state
-    reset() {
-        this.stopStreaming();
-        this.retryCount = 0;
-        this.clearTimeout();
-        this.streamBuffer = '';
-        this._lastRequest = null;
-    }
-
-    // Set timeout
+    // Timer Management
     setTimeout() {
         this.clearTimeout();
         this.timeoutId = setTimeout(() => {
@@ -46,7 +41,6 @@ class BedrockResponseHandler {
         }, this.timeout);
     }
 
-    // Clear timeout
     clearTimeout() {
         if (this.timeoutId) {
             clearTimeout(this.timeoutId);
@@ -54,7 +48,15 @@ class BedrockResponseHandler {
         }
     }
 
-    // Format error message for display
+    reset() {
+        this.stopStreaming();
+        this.retryCount = 0;
+        this.clearTimeout();
+        this.streamBuffer = '';
+        this._lastRequest = null;
+    }
+
+    // Error Handling
     formatErrorMessage(error) {
         return `<div class="error-message">
             <span class="dashicons dashicons-warning"></span>
@@ -62,27 +64,18 @@ class BedrockResponseHandler {
         </div>`;
     }
 
-    // Get human-readable error text
     getErrorText(error) {
-        switch (error.code) {
-            case 'TIMEOUT':
-                return 'Request timed out. Please try again.';
-            case 'NETWORK_ERROR':
-                return 'Network connection error. Please check your connection.';
-            case 'PARSE_ERROR':
-                return 'Error processing response. Please try again.';
-            case 'STREAM_ERROR':
-                return 'Stream connection error. Please try again.';
-            case 'HTTP_ERROR':
-                return `Server error (${error.message}). Please try again later.`;
-            case 'API_ERROR':
-                return `API error: ${error.message}`;
-            default:
-                return error.message || 'An unknown error occurred';
-        }
+        const errorMessages = {
+            'TIMEOUT': 'Request timed out. Please try again.',
+            'NETWORK_ERROR': 'Network connection error. Please check your connection.',
+            'PARSE_ERROR': 'Error processing response. Please try again.',
+            'STREAM_ERROR': 'Stream connection error. Please try again.',
+            'HTTP_ERROR': `Server error (${error.message}). Please try again later.`,
+            'API_ERROR': `API error: ${error.message}`
+        };
+        return errorMessages[error.code] || error.message || 'An unknown error occurred';
     }
 
-    // Handle errors
     handleError(error) {
         this.clearTimeout();
         
@@ -92,7 +85,6 @@ class BedrockResponseHandler {
             if (this.callbacks.onRetry) {
                 this.callbacks.onRetry(this.retryCount, error);
             }
-            // Exponential backoff
             const delay = Math.min(1000 * Math.pow(2, this.retryCount - 1), 10000);
             setTimeout(() => this.retry(), delay);
             return;
@@ -104,7 +96,7 @@ class BedrockResponseHandler {
         this.reset();
     }
 
-    // Handle streaming response
+    // Stream Response Processing
     handleStreamResponse(response) {
         try {
             this.clearTimeout();
@@ -112,95 +104,48 @@ class BedrockResponseHandler {
 
             // Handle Nova model responses
             if (response.output?.message?.content) {
-                const content = response.output.message.content;
-                if (Array.isArray(content)) {
-                    const text = content
-                        .filter(item => item.text)
-                        .map(item => item.text)
-                        .join('');
-                    this.streamBuffer += text;
-                    if (this.callbacks.onContent) {
-                        this.callbacks.onContent({
-                            type: 'text',
-                            content: text
-                        });
-                    }
-                    return;
+                const result = this.processNovaResponse(response.output.message);
+                if (result.content && this.callbacks.onContent) {
+                    this.callbacks.onContent(result);
                 }
+                return;
             }
 
-            // Handle base64 encoded responses
-            if (response.bytes) {
-                try {
-                    const decoded = JSON.parse(atob(response.bytes));
-                    
-                    // Handle Nova content
-                    if (decoded.results && Array.isArray(decoded.results)) {
-                        const text = decoded.results[0]?.outputText || '';
-                        this.streamBuffer += text;
-                        if (this.callbacks.onContent) {
-                            this.callbacks.onContent({
-                                type: 'text',
-                                content: text
-                            });
-                        }
-                        return;
-                    }
-
-                    // Handle other content types
-                    switch (decoded.type) {
-                        case 'content_block_delta':
-                            const text = decoded.delta.text || '';
-                            this.streamBuffer += text;
-                            if (this.callbacks.onContent) {
-                                this.callbacks.onContent({
-                                    type: 'text',
-                                    content: text
-                                });
-                            }
-                            break;
-
-                        case 'tool_call':
-                            if (this.callbacks.onContent) {
-                                this.callbacks.onContent({
-                                    type: 'tool_call',
-                                    content: {
-                                        name: decoded.name,
-                                        arguments: decoded.arguments
-                                    }
-                                });
-                            }
-                            break;
-
-                        case 'tool_result':
-                            if (this.callbacks.onContent) {
-                                this.callbacks.onContent({
-                                    type: 'tool_result',
-                                    content: {
-                                        name: decoded.name,
-                                        result: decoded.content
-                                    }
-                                });
-                            }
-                            break;
-
-                        default:
-                            console.warn('[BedrockResponseHandler] Unknown response type:', decoded.type);
-                    }
-                } catch (decodeError) {
-                    console.error('[BedrockResponseHandler] Failed to decode base64:', decodeError);
-                    throw decodeError;
+            // Handle tool calls
+            if (response.type === 'tool_call') {
+                const toolCall = this.processToolCall(response);
+                if (toolCall && this.callbacks.onToolCall) {
+                    this.callbacks.onToolCall(toolCall);
                 }
-            } else if (response.error) {
+                return;
+            }
+
+            // Handle tool results
+            if (response.type === 'tool_result') {
+                const result = this.processToolResult(response);
+                if (result && this.callbacks.onToolResult) {
+                    this.callbacks.onToolResult(result);
+                }
+                return;
+            }
+
+            // Handle completion
+            if (response.done) {
+                this.handleStreamCompletion();
+                return;
+            }
+
+            // Handle errors
+            if (response.error) {
                 const error = new Error(response.error);
                 error.code = 'STREAM_ERROR';
                 this.handleError(error);
-            } else if (response.done) {
-                this.clearTimeout();
-                if (this.callbacks.onComplete) {
-                    this.callbacks.onComplete(this.streamBuffer);
-                }
-                this.reset();
+                return;
+            }
+
+            // Handle regular content
+            if (response.content) {
+                this.appendToBuffer(response.content);
             }
         } catch (error) {
             error.code = 'PARSE_ERROR';
@@ -208,19 +153,203 @@ class BedrockResponseHandler {
         }
     }
 
-    // Start streaming response
+    // Non-Stream Response Processing
+    async handleNonStreamResponse(response) {
+        try {
+            this.clearTimeout();
+            const data = await this.parseResponseData(response);
+            
+            if (data.error) {
+                const error = new Error(data.error);
+                error.code = 'API_ERROR';
+                throw error;
+            }
+
+            // Handle Nova model responses
+            if (data.output?.message) {
+                const message = data.output.message;
+                const content = message.content?.[0]?.text || '';
+                return {
+                    type: 'text',
+                    content: content,
+                    role: message.role || 'assistant'
+                };
+            }
+
+            // Handle tool calls
+            if (data.tool_calls) {
+                return this.processToolCalls(data.tool_calls);
+            }
+
+            // Handle tool results
+            if (data.tool_use) {
+                return this.processToolResult(data.tool_use);
+            }
+
+            // Handle general content
+            return this.processGeneralContent(data);
+
+        } catch (error) {
+            if (!error.code) {
+                error.code = 'PARSE_ERROR';
+            }
+            this.handleError(error);
+            throw error;
+        }
+    }
+
+    // Alias for backward compatibility
+    handleResponse(response) {
+        return this.handleNonStreamResponse(response);
+    }
+
+    // Response Processing Helpers
+    processNovaResponse(message) {
+        if (!message || !message.content) {
+            return {
+                type: 'text',
+                content: '',
+                role: 'assistant'
+            };
+        }
+
+        // Process array of content items
+        if (Array.isArray(message.content)) {
+            const text = message.content
+                .filter(item => item && typeof item === 'object')
+                .map(item => item.text || '')
+                .join('');
+
+            return {
+                type: 'text',
+                content: text,
+                role: message.role || 'assistant'
+            };
+        }
+
+        // Handle case where content might be directly in the message
+        return {
+            type: 'text',
+            content: message.content.text || message.text || '',
+            role: message.role || 'assistant'
+        };
+    }
+
+    processToolCall(data) {
+        const toolCall = {
+            name: data.name,
+            arguments: data.arguments
+        };
+
+        const callId = `${toolCall.name}_${Date.now()}`;
+        this.pendingToolCalls.set(callId, toolCall);
+
+        if (this.callbacks.onContent) {
+            this.callbacks.onContent({
+                type: 'tool_call',
+                content: toolCall
+            });
+        }
+
+        return toolCall;
+    }
+
+    processToolCalls(toolCalls) {
+        toolCalls.forEach(call => {
+            const callId = `${call.name}_${Date.now()}`;
+            this.pendingToolCalls.set(callId, call);
+        });
+
+        return {
+            type: 'tool_call',
+            content: toolCalls
+        };
+    }
+
+    processToolResult(data) {
+        const result = {
+            name: data.name,
+            result: data.content || data.result
+        };
+
+        for (const [callId, toolCall] of this.pendingToolCalls.entries()) {
+            if (toolCall.name === result.name) {
+                this.pendingToolCalls.delete(callId);
+                break;
+            }
+        }
+
+        if (this.callbacks.onContent) {
+            this.callbacks.onContent({
+                type: 'tool_result',
+                content: result
+            });
+        }
+
+        return result;
+    }
+
+    processGeneralContent(data) {
+        const content = data.content || data;
+        const text = this.processTextContent(content);
+        return {
+            type: 'text',
+            content: text
+        };
+    }
+
+    processTextContent(content) {
+        if (Array.isArray(content)) {
+            return content
+                .filter(item => item.text)
+                .map(item => item.text)
+                .join('');
+        }
+        return content?.text || content || '';
+    }
+
+    handleStreamCompletion() {
+        this.clearTimeout();
+        if (this.callbacks.onComplete) {
+            this.callbacks.onComplete(this.streamBuffer);
+        }
+        this.reset();
+    }
+
+    // Response Data Parsing
+    async parseResponseData(response) {
+        if (response instanceof Response) {
+            if (!response.ok) {
+                const error = new Error(`HTTP error! status: ${response.status}`);
+                error.code = 'HTTP_ERROR';
+                throw error;
+            }
+            return await response.json();
+        }
+        return response;
+    }
+
+    appendToBuffer(text) {
+        if (!text) return;
+        
+        this.streamBuffer += text;
+        if (this.callbacks.onContent) {
+            this.callbacks.onContent({
+                type: 'text',
+                content: text
+            });
+        }
+    }
+
+    // Streaming Control
     async startStreaming(url, requestBody) {
         try {
             this.reset();
             this.setTimeout();
-
-            // Store request for retries
             this._lastRequest = { url, requestBody };
 
-            // Create new EventSource
             this.currentEventSource = new EventSource(url);
 
-            // Set up event handlers
             this.currentEventSource.onmessage = (event) => {
                 try {
                     const response = JSON.parse(event.data);
@@ -236,12 +365,9 @@ class BedrockResponseHandler {
                 this.handleError(error);
             };
 
-            // Send initial request
             const response = await fetch(url, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(requestBody)
             });
 
@@ -253,15 +379,12 @@ class BedrockResponseHandler {
 
             return true;
         } catch (error) {
-            if (!error.code) {
-                error.code = 'NETWORK_ERROR';
-            }
+            if (!error.code) error.code = 'NETWORK_ERROR';
             this.handleError(error);
             return false;
         }
     }
 
-    // Retry current request
     async retry() {
         if (this._lastRequest) {
             const { url, requestBody } = this._lastRequest;
@@ -270,7 +393,6 @@ class BedrockResponseHandler {
         return false;
     }
 
-    // Stop streaming response
     stopStreaming() {
         if (this.currentEventSource) {
             this.currentEventSource.close();
@@ -279,100 +401,15 @@ class BedrockResponseHandler {
         this.streamBuffer = '';
     }
 
-    // Handle non-streaming response
-    async handleResponse(response) {
-        try {
-            this.clearTimeout();
-            
-            // Handle both fetch Response objects and jQuery ajax responses
-            let data;
-            if (response instanceof Response) {
-                if (!response.ok) {
-                    const error = new Error(`HTTP error! status: ${response.status}`);
-                    error.code = 'HTTP_ERROR';
-                    throw error;
-                }
-                data = await response.json();
-            } else {
-                // Assume jQuery ajax response
-                data = response;
-            }
-            
-            if (data.error) {
-                const error = new Error(data.error);
-                error.code = 'API_ERROR';
-                throw error;
-            }
-
-            // Handle Nova model responses
-            if (data.output?.message?.content) {
-                const content = data.output.message.content;
-                if (Array.isArray(content)) {
-                    const textContent = content
-                        .filter(item => item.text)
-                        .map(item => item.text)
-                        .join('');
-                    return {
-                        type: 'text',
-                        content: textContent
-                    };
-                }
-            }
-
-            // Handle other model responses
-            if (data.content) {
-                if (Array.isArray(data.content)) {
-                    // Handle array of content items
-                    const textContent = data.content
-                        .filter(item => item.type === 'text')
-                        .map(item => item.text)
-                        .join('');
-                    return {
-                        type: 'text',
-                        content: textContent
-                    };
-                }
-                return {
-                    type: 'text',
-                    content: data.content
-                };
-            } else if (data.tool_calls) {
-                return {
-                    type: 'tool_call',
-                    content: data.tool_calls
-                };
-            } else if (data.tool_use) {
-                return {
-                    type: 'tool_result',
-                    content: data.tool_use
-                };
-            }
-
-            // If no recognized format, return raw data
-            return {
-                type: 'text',
-                content: JSON.stringify(data)
-            };
-        } catch (error) {
-            if (!error.code) {
-                error.code = 'PARSE_ERROR';
-            }
-            this.handleError(error);
-            throw error;
-        }
-    }
-
-    // Get current stream buffer
+    // Utility Methods
     getStreamBuffer() {
         return this.streamBuffer;
     }
 
-    // Clear stream buffer
     clearStreamBuffer() {
         this.streamBuffer = '';
     }
 
-    // Check if currently streaming
     isStreaming() {
         return this.currentEventSource !== null;
     }
