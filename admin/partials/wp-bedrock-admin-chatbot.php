@@ -111,8 +111,8 @@ if (!defined('ABSPATH')) exit;
                                                 }
                                             }
                                         } catch (Exception $e) {
-                                            error_log('[AI Chat for Amazon Bedrock] Error loading tools: ' . $e->getMessage());
-                                            echo '<!-- Tools loading error: ' . esc_html($e->getMessage()) . ' -->';
+                                            // error_log('[AI Chat for Amazon Bedrock] Error loading tools: ' . $e->getMessage());
+                                            // echo '<!-- Tools loading error: ' . esc_html($e->getMessage()) . ' -->';
                                         }
                                         ?>
                                     </div>
@@ -524,24 +524,69 @@ if (!defined('ABSPATH')) exit;
     border-bottom: 1px solid #ebedf0;
     padding: 16px 20px;
     border-radius: 12px 12px 0 0;
+    position: relative;
+    min-height: 25px;
 }
 
 .ui-dialog.tools-dialog .ui-dialog-title {
     font-size: 16px;
     font-weight: 600;
     color: #1c1e21;
+    margin: 0;
+    padding-right: 36px;
 }
 
 .ui-dialog.tools-dialog .ui-dialog-titlebar-close {
+    position: absolute;
+    right: 8px;
+    top: 8px;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    margin: 0;
     border: none;
+    border-radius: 50%;
     background: transparent;
     color: #65676b;
-    right: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    z-index: 1;
 }
 
 .ui-dialog.tools-dialog .ui-dialog-titlebar-close:hover {
     background: #f2f3f5;
-    border-radius: 50%;
+    color: #1877f2;
+}
+
+/* Hide default jQuery UI close button icon */
+.ui-dialog.tools-dialog .ui-dialog-titlebar-close .ui-icon,
+.ui-dialog.tools-dialog .ui-dialog-titlebar-close .ui-button-icon {
+    display: none !important;
+}
+
+/* Style our custom dashicons close icon */
+.ui-dialog.tools-dialog .ui-dialog-titlebar-close .dashicons {
+    width: 20px;
+    height: 20px;
+    font-size: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+}
+
+/* Override any WordPress admin styles */
+.wp-core-ui .ui-dialog.tools-dialog .ui-dialog-titlebar-close {
+    box-shadow: none;
+    outline: none;
+}
+
+.wp-core-ui .ui-dialog.tools-dialog .ui-dialog-titlebar-close:focus {
+    box-shadow: none;
+    outline: none;
 }
 
 .ui-dialog.tools-dialog .ui-dialog-content {

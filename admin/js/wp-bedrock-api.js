@@ -77,6 +77,7 @@ class BedrockAPI {
                             const imageUrl = item.image_url?.url || item.url;
                             return `<img src="${imageUrl}" alt="Generated image" class="generated-image">`;
                         case 'tool_call':
+                        case 'tool_use':  // Handle Claude's tool_use type
                             return this.formatToolCall(item);
                         case 'tool_result':
                             return this.formatToolResult(item);
@@ -89,7 +90,7 @@ class BedrockAPI {
 
         // Handle tool-specific content objects
         if (content && typeof content === 'object') {
-            if (content.type === 'tool_call') {
+            if (content.type === 'tool_call' || content.type === 'tool_use') {  // Handle Claude's tool_use type
                 return this.formatToolCall(content);
             }
             if (content.type === 'tool_result') {
@@ -102,23 +103,31 @@ class BedrockAPI {
 
     // Format tool call for display
     static formatToolCall(toolCall) {
+        // Handle Claude's tool_use format
+        const name = toolCall.name || toolCall.content?.name || toolCall.tool_name || '';
+        const args = toolCall.arguments || toolCall.content?.arguments || toolCall.tool_arguments || {};
+        
         return `<div class="tool-message tool-call">
             <div class="tool-header">
                 <span class="tool-type">Tool Call</span>
-                <span class="tool-name">${toolCall.name || toolCall.content?.name || ''}</span>
+                <span class="tool-name">${name}</span>
             </div>
-            <pre class="tool-content"><code>${JSON.stringify(toolCall.arguments || toolCall.content?.arguments || {}, null, 2)}</code></pre>
+            <pre class="tool-content"><code>${JSON.stringify(args, null, 2)}</code></pre>
         </div>`;
     }
 
     // Format tool result for display
     static formatToolResult(toolResult) {
+        // Handle Claude's tool_use format
+        const name = toolResult.name || toolResult.content?.name || toolResult.tool_name || '';
+        const result = toolResult.result || toolResult.content?.result || toolResult.tool_result || {};
+        
         return `<div class="tool-message tool-result">
             <div class="tool-header">
                 <span class="tool-type">Tool Result</span>
-                <span class="tool-name">${toolResult.name || toolResult.content?.name || ''}</span>
+                <span class="tool-name">${name}</span>
             </div>
-            <pre class="tool-content"><code>${JSON.stringify(toolResult.result || toolResult.content?.result || {}, null, 2)}</code></pre>
+            <pre class="tool-content"><code>${JSON.stringify(result, null, 2)}</code></pre>
         </div>`;
     }
 
@@ -285,21 +294,23 @@ class BedrockAPI {
                     };
                 }
 
-                // Handle array content (text and images)
+                // Handle array content (text, images, and tools)
                 return {
                     role: mappedRole,
                     content: content
-                        .filter(item => item.image_url || item.text)
-                        .map(({ type, text, image_url }) => {
-                            if (type === "text" || text) {
+                        .filter(item => item.image_url || item.text || item.type === 'tool_use' || item.type === 'tool_result')
+                        .map(item => {
+                            // Handle text content
+                            if (item.type === "text" || item.text) {
                                 return {
                                     type: "text",
-                                    text: text
+                                    text: item.text
                                 };
                             }
 
-                            if (image_url?.url) {
-                                const { url = "" } = image_url;
+                            // Handle image content
+                            if (item.image_url?.url) {
+                                const { url = "" } = item.image_url;
                                 const colonIndex = url.indexOf(":");
                                 const semicolonIndex = url.indexOf(";");
                                 const comma = url.indexOf(",");
@@ -317,6 +328,27 @@ class BedrockAPI {
                                     }
                                 };
                             }
+
+                            // Handle tool use
+                            if (item.type === 'tool_use') {
+                                return {
+                                    type: 'tool_use',
+                                    id: item.id,
+                                    name: item.name,
+                                    input: typeof item.input === 'string' ? 
+                                        JSON.parse(item.input) : item.input
+                                };
+                            }
+
+                            // Handle tool result
+                            if (item.type === 'tool_result') {
+                                return {
+                                    type: 'tool_result',
+                                    tool_use_id: item.tool_use_id,
+                                    content: item.content
+                                };
+                            }
+
                             return null;
                         })
                         .filter(Boolean)

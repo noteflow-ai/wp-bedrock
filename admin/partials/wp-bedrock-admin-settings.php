@@ -129,7 +129,7 @@ if (!defined('ABSPATH')) exit;
                             <p class="description">Number of previous messages to include as context (1-10)</p>
                         </td>
                     </tr>
-                    <tr valign="top">
+                    <!-- <tr valign="top">
                         <th scope="row">Enable Streaming</th>
                         <td>
                             <label>
@@ -138,7 +138,7 @@ if (!defined('ABSPATH')) exit;
                             </label>
                             <p class="description">Provides a more interactive experience</p>
                         </td>
-                    </tr>
+                    </tr> -->
                 </table>
             </div>
         </div>

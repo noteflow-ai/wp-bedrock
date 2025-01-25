@@ -12,17 +12,40 @@ Integrate Amazon Bedrock AI capabilities into WordPress with streaming chat supp
 
 == Description ==
 
-Bedrock AI Chat brings the power of Amazon Bedrock's AI models to your WordPress site, providing an intelligent chatbot with real-time streaming responses.
+AI Chat for Amazon Bedrock brings the power of Amazon Bedrock's AI models to your WordPress site, providing an intelligent chatbot with real-time streaming responses.
 
-Features:
+= Current Features =
 
-* Real-time AI Chat with streaming responses
-* Typewriter-style response display
+* Basic chat interface with Amazon Bedrock AI
+* AWS Bedrock integration with Claude model
 * Chat history tracking
 * Multi-language support
-* Powered by Amazon Bedrock AI models (Claude)
+* Configurable AWS settings (region, credentials)
+* Customizable chat settings:
+  * Model selection
+  * Temperature control
+  * System prompt customization
+  * Initial message configuration
+  * Context length adjustment
 
-Requirements:
+= Roadmap =
+
+We're actively working on exciting new features:
+
+* Real-time streaming responses with typewriter effect
+* Tool use capabilities for enhanced AI interactions
+* Image generation support:
+  * Integration with Bedrock image models
+  * Multiple model support (Stable Diffusion, DALL-E, etc.)
+  * Image customization options
+  * Image history management
+* Advanced chat features:
+  * Context-aware conversations
+  * File attachment support
+  * Custom function calling
+  * Knowledge base integration
+
+= Requirements =
 
 * WordPress 5.0 or higher
 * PHP 7.4 or higher
@@ -34,7 +57,7 @@ Requirements:
 1. Upload the `wp-bedrock` folder to the `/wp-content/plugins/` directory
 2. Run `composer install` in the plugin directory to install dependencies
 3. Activate the plugin through the 'Plugins' menu in WordPress
-4. Go to Bedrock AI Chat > Settings to configure your AWS credentials:
+4. Go to AI Chat for Amazon Bedrock > Settings to configure your AWS credentials:
    * Enter your AWS Access Key and Secret
    * Select your preferred AI model
    * Save settings
@@ -53,6 +76,14 @@ You can create AWS credentials in your AWS Console under IAM (Identity and Acces
 
 Yes, all chat conversations are stored in your WordPress database.
 
+= What AI models are supported? =
+
+Currently, we support Claude through Amazon Bedrock. More models will be added in future updates.
+
+= Can I customize the chat interface? =
+
+Yes, you can customize various aspects including the initial message, system prompt, temperature settings, and context length.
+
 == Screenshots ==
 
 1. Chatbot interface with streaming responses
@@ -63,15 +94,16 @@ Yes, all chat conversations are stored in your WordPress database.
 
 = 1.0.0 =
 * Initial release
-* Real-time chat with streaming responses
-* AWS Bedrock integration
-* Multi-language support
+* Basic chat interface with Amazon Bedrock AI
+* AWS Bedrock integration with Claude model
 * Chat history tracking
+* Multi-language support
+* Configurable AWS and chat settings
 
 == Upgrade Notice ==
 
 = 1.0.0 =
-Initial release of Bedrock AI Chat plugin.
+Initial release of AI Chat for Amazon Bedrock plugin.
 
 == Privacy Policy ==
 

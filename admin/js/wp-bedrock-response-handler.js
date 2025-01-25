@@ -21,13 +21,15 @@ class BedrockResponseHandler {
         this._lastRequest = null;
     }
 
-    setCallbacks({ onContent, onError, onComplete, onRetry }) {
+    setCallbacks({ onContent, onError, onComplete, onRetry, onToolCall, onToolResult }) {
         this.callbacks = {
             ...this.callbacks,
             onContent: onContent || this.callbacks.onContent,
             onError: onError || this.callbacks.onError,
             onComplete: onComplete || this.callbacks.onComplete,
-            onRetry: onRetry || this.callbacks.onRetry
+            onRetry: onRetry || this.callbacks.onRetry,
+            onToolCall: onToolCall || this.callbacks.onToolCall,
+            onToolResult: onToolResult || this.callbacks.onToolResult
         };
     }
 
@@ -111,8 +113,8 @@ class BedrockResponseHandler {
                 return;
             }
 
-            // Handle tool calls
-            if (response.type === 'tool_call') {
+            // Handle tool calls and Claude's tool_use
+            if (response.type === 'tool_call' || response.type === 'tool_use') {
                 const toolCall = this.processToolCall(response);
                 if (toolCall && this.callbacks.onToolCall) {
                     this.callbacks.onToolCall(toolCall);
@@ -176,14 +178,49 @@ class BedrockResponseHandler {
                 };
             }
 
-            // Handle tool calls
-            if (data.tool_calls) {
-                return this.processToolCalls(data.tool_calls);
+            // Handle Claude's content array format
+            if (Array.isArray(data.content)) {
+                for (const item of data.content) {
+                    if (item.type === 'tool_use') {
+                        const toolCall = this.processToolCall(item);
+                        if (toolCall && this.callbacks.onToolCall) {
+                            this.callbacks.onToolCall(toolCall);
+                        }
+                        return {
+                            type: 'tool_call',
+                            content: toolCall
+                        };
+                    } else if (item.type === 'text') {
+                        this.appendToBuffer(item.text);
+                    }
+                }
+            }
+
+            // Handle tool calls and Claude's tool_use
+            if (data.tool_calls || data.type === 'tool_use') {
+                const toolCalls = data.tool_calls || [data];
+                const processed = toolCalls.map(call => this.processToolCall(call));
+                processed.forEach(toolCall => {
+                    if (toolCall && this.callbacks.onToolCall) {
+                        this.callbacks.onToolCall(toolCall);
+                    }
+                });
+                return {
+                    type: 'tool_call',
+                    content: processed
+                };
             }
 
             // Handle tool results
-            if (data.tool_use) {
-                return this.processToolResult(data.tool_use);
+            if (data.tool_result || data.type === 'tool_result') {
+                const result = this.processToolResult(data);
+                if (result && this.callbacks.onToolResult) {
+                    this.callbacks.onToolResult(result);
+                }
+                return {
+                    type: 'tool_result',
+                    content: result
+                };
             }
 
             // Handle general content
@@ -236,13 +273,19 @@ class BedrockResponseHandler {
     }
 
     processToolCall(data) {
+        // Handle Claude's tool_use format
         const toolCall = {
-            name: data.name,
-            arguments: data.arguments
+            id: data.id || `call_${Date.now()}`,
+            name: data.name || data.tool_name,
+            function: {
+                name: data.name || data.tool_name,
+                arguments: typeof data.input === 'string' ? 
+                    data.input : 
+                    JSON.stringify(data.input || data.arguments || data.tool_arguments || {})
+            }
         };
 
-        const callId = `${toolCall.name}_${Date.now()}`;
-        this.pendingToolCalls.set(callId, toolCall);
+        this.pendingToolCalls.set(toolCall.id, toolCall);
 
         if (this.callbacks.onContent) {
             this.callbacks.onContent({
@@ -255,25 +298,29 @@ class BedrockResponseHandler {
     }
 
     processToolCalls(toolCalls) {
-        toolCalls.forEach(call => {
-            const callId = `${call.name}_${Date.now()}`;
-            this.pendingToolCalls.set(callId, call);
+        const processed = toolCalls.map(call => this.processToolCall(call));
+        processed.forEach(toolCall => {
+            if (toolCall && this.callbacks.onToolCall) {
+                this.callbacks.onToolCall(toolCall);
+            }
         });
-
         return {
             type: 'tool_call',
-            content: toolCalls
+            content: processed
         };
     }
 
     processToolResult(data) {
+        // Handle Claude's tool_use format
         const result = {
-            name: data.name,
-            result: data.content || data.result
+            tool_call_id: data.tool_use_id || data.id,
+            name: data.name || data.tool_name,
+            content: data.content || data.result || data.tool_result || data.data // Add data fallback for DuckDuckGo response
         };
 
+        // Find and remove the matching tool call
         for (const [callId, toolCall] of this.pendingToolCalls.entries()) {
-            if (toolCall.name === result.name) {
+            if (callId === result.tool_call_id || toolCall.name === result.name) {
                 this.pendingToolCalls.delete(callId);
                 break;
             }

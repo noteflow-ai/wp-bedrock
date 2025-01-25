@@ -29,11 +29,39 @@ class WP_Bedrock_AWS {
         $this->log_debug('Initializing AWS client with region: ' . $this->region);
     }
 
+    private function sanitize_log_data($data) {
+        if (is_string($data)) {
+            // Mask potential sensitive data in strings
+            return preg_replace([
+                '/("accessKey"|"secretKey"|"key"|"secret")\s*:\s*"[^"]*"/',
+                '/("authorization")\s*:\s*"[^"]*"/',
+                '/("password"|"token"|"apiKey")\s*:\s*"[^"]*"/'
+            ], '$1:"[REDACTED]"', $data);
+        }
+        
+        if (is_array($data)) {
+            $sanitized = [];
+            foreach ($data as $key => $value) {
+                // Skip sensitive keys entirely
+                if (in_array(strtolower($key), ['authorization', 'password', 'token', 'apikey', 'secret', 'accesskey', 'secretkey'])) {
+                    continue;
+                }
+                // Recursively sanitize nested data
+                $sanitized[$key] = $this->sanitize_log_data($value);
+            }
+            return $sanitized;
+        }
+        
+        return $data;
+    }
+
     private function log_debug($message, $data = null) {
         if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
             $log_message = '[AI Chat for Amazon Bedrock] ' . $message;
             if ($data !== null) {
-                $log_message .= ' ' . (is_string($data) ? $data : json_encode($data));
+                // Sanitize any sensitive data before logging
+                $sanitized_data = $this->sanitize_log_data($data);
+                $log_message .= ' ' . (is_string($sanitized_data) ? $sanitized_data : json_encode($sanitized_data));
             }
             error_log($log_message);
         }
@@ -181,27 +209,46 @@ class WP_Bedrock_AWS {
                 'header' => $header_string,
                 'content' => $json_body,
                 'ignore_errors' => true,
-                'timeout' => $this->timeout
+                'timeout' => $this->timeout,
+                'max_redirects' => 5,
+                'protocol_version' => 1.1,
+                'follow_location' => 1,
+                'user_agent' => 'WordPress/WP-Bedrock',
+                'buffer_size' => 8192 * 16  // Increase buffer size for large responses
             ]
         ]);
 
-        $this->log_debug('Body:', $body);
-
-        $response = @fopen($url, 'r', false, $context);
-        if ($response === false) {
-            $error = error_get_last();
-            $error_message = $error['message'] ?? 'Unknown error';
-            $this->log_debug('Request failed: ' . $error_message);
-            
-            // Check for common AWS errors
-            if (strpos($error_message, '403') !== false) {
-                throw new Exception('AWS authentication failed. Please verify your credentials and IAM permissions for Bedrock.');
-            } else if (strpos($error_message, '404') !== false) {
-                throw new Exception('AWS Bedrock endpoint not found. Please verify your region and model ID.');
-            }
-            
-            throw new Exception('Failed to open stream: ' . $error_message);
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            $this->log_debug('Body:', $this->sanitize_log_data($body));
         }
+
+        // Try to get response using file_get_contents first
+        $response_content = @file_get_contents($url, false, $context);
+        if ($response_content === false) {
+            // If file_get_contents fails, try fopen as fallback
+            $response = @fopen($url, 'r', false, $context);
+            if ($response === false) {
+                $error = error_get_last();
+                $error_message = $error['message'] ?? 'Unknown error';
+                $this->log_debug('Request failed: ' . $error_message);
+                
+                // Check for common AWS errors
+                if (strpos($error_message, '403') !== false) {
+                    throw new Exception('AWS authentication failed. Please verify your credentials and IAM permissions for Bedrock.');
+                } else if (strpos($error_message, '404') !== false) {
+                    throw new Exception('AWS Bedrock endpoint not found. Please verify your region and model ID.');
+                }
+                
+                throw new Exception('Failed to open stream: ' . $error_message);
+            }
+            return $response;
+        }
+
+        // Create a memory stream from the response content
+        $stream = fopen('php://memory', 'r+');
+        fwrite($stream, $response_content);
+        rewind($stream);
+        return $stream;
 
         $meta = stream_get_meta_data($response);
         foreach ($meta['wrapper_data'] as $header) {
@@ -339,7 +386,9 @@ class WP_Bedrock_AWS {
                 $buffer = substr($buffer, $pos + 1);
                 
                 if (!empty($message)) {
-                    $this->log_debug('Streaming response:', json_encode($message, JSON_PRETTY_PRINT));
+                    if (defined('WP_DEBUG') && WP_DEBUG) {
+                        $this->log_debug('Streaming response:', $this->sanitize_log_data($message));
+                    }
                     $events = $this->parse_event_data($message);
                     foreach ($events as $event) {
                         if ($callback) {
@@ -470,11 +519,13 @@ class WP_Bedrock_AWS {
 
     public function invoke_model($request_body, $model_id, $stream = false, $callback = null) {
         try {
-            $this->log_debug('Request:', [
-                'model_id' => $model_id,
-                'stream' => $stream,
-                'body' => $request_body
-            ]);
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                $this->log_debug('Request:', [
+                    'model_id' => $model_id,
+                    'stream' => $stream,
+                    'body' => $this->sanitize_log_data($request_body)
+                ]);
+            }
 
             $url = $this->get_bedrock_endpoint($model_id, $stream);
 
@@ -496,7 +547,9 @@ class WP_Bedrock_AWS {
                     throw new Exception('Failed to decode response: ' . json_last_error_msg());
                 }
 
-                $this->log_debug('Non-streaming response:', json_encode($result, JSON_PRETTY_PRINT));
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    $this->log_debug('Non-streaming response:', $this->sanitize_log_data($result));
+                }
                 return $result;
             }
         } catch (Exception $e) {

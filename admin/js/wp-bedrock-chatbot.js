@@ -2,6 +2,16 @@
  * Main chatbot initialization script
  */
 
+// Debug mode check
+const isDebugMode = () => typeof wpbedrock_chat !== 'undefined' && wpbedrock_chat.debug_mode === '1';
+
+// Debug logging wrapper
+const debugLog = (...args) => {
+    if (isDebugMode()) {
+        console.log('[AI Chat for Amazon Bedrock]', ...args);
+    }
+};
+
 async function initChatbot() {
     // Dependencies are loaded through WordPress enqueue system
     const requiredDeps = {
@@ -26,10 +36,11 @@ async function initChatbot() {
 
     if (missing.length > 0) {
         if (window.wpBedrockInitAttempts < MAX_ATTEMPTS) {
-            console.log(`[AI Chat for Amazon Bedrock] Waiting for libraries (attempt ${window.wpBedrockInitAttempts}/${MAX_ATTEMPTS}):`, missing.join(', '));
+            debugLog(`Waiting for libraries (attempt ${window.wpBedrockInitAttempts}/${MAX_ATTEMPTS}):`, missing.join(', '));
             setTimeout(initChatbot, 100);
             return;
         } else {
+            // Always log critical initialization failures
             console.error('[AI Chat for Amazon Bedrock] Failed to load required libraries:', missing.join(', '));
             const container = document.querySelector('.chat-container');
             if (container) {
@@ -47,7 +58,7 @@ async function initChatbot() {
     // Reset attempts counter on successful load
     window.wpBedrockInitAttempts = 0;
 
-    console.log('[AI Chat for Amazon Bedrock] All dependencies loaded, initializing chatbot...');
+    debugLog('All dependencies loaded, initializing chatbot...');
     const $ = jQuery;
 
     // Initialize chat manager with jQuery
@@ -82,9 +93,7 @@ async function initChatbot() {
         modal: true,
         width: 600,
         dialogClass: 'tools-dialog',
-        create: function() {
-            $(this).closest('.ui-dialog').find('.ui-dialog-titlebar-close').html('<span class="dashicons dashicons-no"></span>');
-        }
+        closeText: ''
     });
 
     // Set up event listeners with jQuery
@@ -180,6 +189,7 @@ async function initChatbot() {
                 button.addClass('button-primary');
                 setTimeout(() => button.removeClass('button-primary'), 1000);
             } catch (err) {
+                // Always log clipboard errors as they indicate a browser API issue
                 console.error('[AI Chat for Amazon Bedrock] Failed to copy chat:', err);
                 alert('Failed to copy chat to clipboard');
             }

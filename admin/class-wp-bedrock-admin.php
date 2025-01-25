@@ -26,6 +26,8 @@ class WP_Bedrock_Admin {
         // AJAX handlers
         add_action('wp_ajax_wpbedrock_chat_message', array($this, 'ajax_chat_message'));
         add_action('wp_ajax_nopriv_wpbedrock_chat_message', array($this, 'ajax_chat_message'));
+        add_action('wp_ajax_wpbedrock_tool_proxy', array($this, 'ajax_tool_proxy'));
+        add_action('wp_ajax_nopriv_wpbedrock_tool_proxy', array($this, 'ajax_tool_proxy'));
         add_action('wp_ajax_wpbedrock_generate_image', array($this, 'ajax_generate_image'));
         add_action('wp_ajax_nopriv_wpbedrock_generate_image', array($this, 'ajax_generate_image'));
         add_action('wp_ajax_wpbedrock_upscale_image', array($this, 'ajax_upscale_image'));
@@ -194,7 +196,8 @@ class WP_Bedrock_Admin {
             'default_model' => get_option('wpbedrock_model_id', 'anthropic.claude-3-haiku-20240307-v1:0'),
             'default_temperature' => floatval(get_option('wpbedrock_temperature', '0.7')),
             'default_system_prompt' => get_option('wpbedrock_system_prompt', 'You are a helpful AI assistant.'),
-            'plugin_url' => plugin_dir_url(__FILE__)
+            'plugin_url' => plugin_dir_url(__FILE__),
+            'tools' => json_decode(file_get_contents(plugin_dir_path(__FILE__) . '../includes/tools.json'), true)
         ));
     }
 
@@ -259,6 +262,58 @@ class WP_Bedrock_Admin {
 
             $result = $this->get_aws_client()->create_image_variation($image_data);
             wp_send_json_success($result);
+        } catch (Exception $e) {
+            wp_send_json_error($e->getMessage());
+        }
+    }
+
+    public function ajax_tool_proxy() {
+        check_ajax_referer('wpbedrock_chat_nonce', 'nonce');
+
+        try {
+            $url = sanitize_url($_REQUEST['url'] ?? '');
+            $method = strtoupper(sanitize_text_field($_REQUEST['method'] ?? 'GET'));
+            $params = $_REQUEST['params'] ?? [];
+
+            if (empty($url)) {
+                throw new Exception('URL is required');
+            }
+
+            $args = [
+                'method' => $method,
+                'timeout' => 30,
+                'redirection' => 5,
+                'httpversion' => '1.1',
+                'headers' => [
+                    'User-Agent' => 'WordPress/' . get_bloginfo('version'),
+                    'Accept' => '*/*'
+                ]
+            ];
+
+            // Handle both GET and POST requests properly
+            if ($method === 'POST') {
+                $args['headers']['Content-Type'] = 'application/x-www-form-urlencoded';
+                // Ensure params are properly encoded for POST
+                $args['body'] = is_array($params) ? http_build_query($params) : $params;
+            } else {
+                // For GET requests, ensure params are properly encoded in URL
+                $url = add_query_arg(is_array($params) ? array_map('urlencode', $params) : $params, $url);
+            }
+
+            $response = wp_remote_request($url, $args);
+
+            if (is_wp_error($response)) {
+                throw new Exception($response->get_error_message());
+            }
+
+            $body = wp_remote_retrieve_body($response);
+            $status = wp_remote_retrieve_response_code($response);
+
+            if ($status !== 200) {
+                throw new Exception('Tool request failed with status: ' . $status);
+            }
+
+            wp_send_json_success(json_decode($body));
         } catch (Exception $e) {
             wp_send_json_error($e->getMessage());
         }
