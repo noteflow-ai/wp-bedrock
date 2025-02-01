@@ -15,6 +15,41 @@
     border: none !important;
 }
 
+/* Chat Input Container Styles */
+.bedrock-chat-shortcode .chat-input-container,
+.widget_wp_bedrock_widget .chat-input-container {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    padding: 12px !important;
+    position: relative !important;
+}
+
+.bedrock-chat-shortcode .input-wrapper,
+.widget_wp_bedrock_widget .input-wrapper {
+    flex: 1 !important;
+    display: flex !important;
+    align-items: center !important;
+    background: #f8f9fa !important;
+    border-radius: 20px !important;
+    padding: 8px 16px !important;
+    margin-right: 0 !important;
+    width: calc(100% - 60px) !important;
+}
+
+.bedrock-chat-shortcode .input-wrapper textarea,
+.bedrock-chat-shortcode .input-wrapper input,
+.widget_wp_bedrock_widget .input-wrapper textarea,
+.widget_wp_bedrock_widget .input-wrapper input {
+    width: 100% !important;
+    border: none !important;
+    background: transparent !important;
+    outline: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    resize: none !important;
+}
+
 /* Shortcode Styles */
 .bedrock-chat-shortcode {
     margin: 20px 0;
@@ -26,26 +61,37 @@
 
 /* Responsive Styles */
 @media screen and (max-width: 782px) {
-    .chat-container {
+    .bedrock-chat-shortcode .chat-container,
+    .widget_wp_bedrock_widget .chat-container {
         height: 400px !important;
     }
 
-    .chat-input-container {
+    .bedrock-chat-shortcode .chat-input-container,
+    .widget_wp_bedrock_widget .chat-input-container {
         padding: 8px !important;
     }
 
-    .action-buttons {
+    .bedrock-chat-shortcode .action-buttons,
+    .widget_wp_bedrock_widget .action-buttons {
         flex-wrap: wrap;
         gap: 4px;
     }
 
-    .action-buttons .button {
+    .bedrock-chat-shortcode .action-buttons .button,
+    .widget_wp_bedrock_widget .action-buttons .button {
         width: 32px;
         height: 32px;
     }
 
-    .input-wrapper {
-        padding: 4px 8px;
+    .bedrock-chat-shortcode .input-wrapper,
+    .widget_wp_bedrock_widget .input-wrapper {
+        padding: 4px 8px !important;
+        width: calc(100% - 52px) !important;
+    }
+
+    .bedrock-chat-shortcode .chat-input-container .send-button,
+    .widget_wp_bedrock_widget .chat-input-container .send-button {
+        right: 8px !important;
     }
 }
 
@@ -58,15 +104,38 @@
     display: none !important;
 }
 
+/* Send Button Styles */
+.bedrock-chat-shortcode #wpaicg-send-message,
+.widget_wp_bedrock_widget #wpaicg-send-message {
+    position: absolute !important;
+    right: 12px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    width: 40px !important;
+    height: 40px !important;
+    border-radius: 20px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: #0d6efd !important;
+    border: none !important;
+    padding: 0 !important;
+    min-width: 40px !important;
+    z-index: 1 !important;
+    margin: 0 !important;
+}
+
 /* Chat Message Styles for Frontend */
-.chat-message img {
+.bedrock-chat-shortcode .chat-message img,
+.widget_wp_bedrock_widget .chat-message img {
     max-width: 100%;
     height: auto;
     border-radius: 4px;
     margin: 8px 0;
 }
 
-.chat-message pre {
+.bedrock-chat-shortcode .chat-message pre,
+.widget_wp_bedrock_widget .chat-message pre {
     margin: 8px 0;
     padding: 12px;
     background: #f8f9fa;
@@ -74,7 +143,8 @@
     overflow-x: auto;
 }
 
-.chat-message code {
+.bedrock-chat-shortcode .chat-message code,
+.widget_wp_bedrock_widget .chat-message code {
     font-family: monospace;
     background: #f8f9fa;
     padding: 2px 4px;
