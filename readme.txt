@@ -27,6 +27,10 @@ AI Chat for Amazon Bedrock brings the power of Amazon Bedrock's AI models to you
   * System prompt customization
   * Initial message configuration
   * Context length adjustment
+* Multiple integration options:
+  * Admin dashboard interface
+  * Shortcode [bedrock_chat] for pages and posts
+  * Widget for sidebars and widget areas
 
 = Roadmap =
 
@@ -62,6 +66,27 @@ We're actively working on exciting new features:
    * Select your preferred AI model
    * Save settings
 
+= Using the Shortcode =
+
+Add the chatbot to any post or page using the shortcode:
+
+[bedrock_chat]
+
+Optional parameters:
+* height: Set the chat window height (default: 500px)
+* width: Set the chat window width (default: 100%)
+
+Example:
+[bedrock_chat height="600px" width="800px"]
+
+= Using the Widget =
+
+1. Go to Appearance > Widgets
+2. Find the "AI Chat Widget" in the available widgets list
+3. Drag it to your desired widget area
+4. Configure the widget title and height
+5. Save the widget settings
+
 == Frequently Asked Questions ==
 
 = Do I need an AWS account? =
@@ -84,15 +109,27 @@ Currently, we support Claude through Amazon Bedrock. More models will be added i
 
 Yes, you can customize various aspects including the initial message, system prompt, temperature settings, and context length.
 
+= Can I add the chatbot to my sidebar? =
+
+Yes, you can use the AI Chat Widget to add the chatbot to any widget area in your theme.
+
+= How do I add the chatbot to a specific page? =
+
+Use the [bedrock_chat] shortcode in your page or post content where you want the chatbot to appear.
+
 == Screenshots ==
 
 1. Chatbot interface with streaming responses
 2. Settings page for AWS configuration
 3. Chat history view
+4. Widget configuration
+5. Shortcode implementation
 
 == Changelog ==
 
 = 1.0.1 =
+* Added shortcode support [bedrock_chat]
+* Added widget support for sidebar integration
 * Updated plugin name to comply with WordPress.org trademark guidelines
 
 = 1.0.0 =
@@ -104,6 +141,9 @@ Yes, you can customize various aspects including the initial message, system pro
 * Configurable AWS and chat settings
 
 == Upgrade Notice ==
+
+= 1.0.1 =
+Added shortcode and widget support for flexible chatbot integration.
 
 = 1.0.0 =
 Initial release of AI Chat for Amazon Bedrock plugin.

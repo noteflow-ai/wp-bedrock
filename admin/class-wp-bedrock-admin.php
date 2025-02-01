@@ -187,7 +187,7 @@ class WP_Bedrock_Admin {
         );
 
         // Chat configuration
-        wp_localize_script($this->plugin_name . '-chatbot', 'wpbedrock_chat', array(
+        wp_localize_script($this->plugin_name . '-chatbot', 'wpbedrock', array(
             'ajaxurl' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('wpbedrock_chat_nonce'),
             'initial_message' => get_option('wpbedrock_chat_initial_message', 'Hello! How can I help you today?'),

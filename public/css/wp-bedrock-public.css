@@ -1,60 +1,91 @@
-/**
- * 所有公共样式
- */
-.wp-bedrock-container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 20px;
+/* Widget Styles */
+.widget_wp_bedrock_widget .chat-container {
+    height: var(--chat-height, 500px) !important;
+    margin: 0 !important;
 }
 
-.wp-bedrock-widget {
-    background: #fff;
-    border: 1px solid #ddd;
+.widget_wp_bedrock_widget .wp-bedrock-settings-container {
+    margin: 0 !important;
+    max-width: none !important;
+}
+
+.widget_wp_bedrock_widget .settings-section {
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+}
+
+/* Shortcode Styles */
+.bedrock-chat-shortcode {
+    margin: 20px 0;
+}
+
+.bedrock-chat-shortcode .chat-container {
+    height: var(--chat-height, 500px);
+}
+
+/* Responsive Styles */
+@media screen and (max-width: 782px) {
+    .chat-container {
+        height: 400px !important;
+    }
+
+    .chat-input-container {
+        padding: 8px !important;
+    }
+
+    .action-buttons {
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+
+    .action-buttons .button {
+        width: 32px;
+        height: 32px;
+    }
+
+    .input-wrapper {
+        padding: 4px 8px;
+    }
+}
+
+/* Override Admin Styles */
+.wp-bedrock-settings-container .wrap {
+    margin: 0 !important;
+}
+
+.wp-bedrock-settings-container .wrap h1 {
+    display: none !important;
+}
+
+/* Chat Message Styles for Frontend */
+.chat-message img {
+    max-width: 100%;
+    height: auto;
     border-radius: 4px;
-    margin-bottom: 20px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin: 8px 0;
 }
 
-.wp-bedrock-widget-header {
-    padding: 15px;
-    border-bottom: 1px solid #ddd;
+.chat-message pre {
+    margin: 8px 0;
+    padding: 12px;
+    background: #f8f9fa;
+    border-radius: 4px;
+    overflow-x: auto;
 }
 
-.wp-bedrock-widget-header h3 {
-    margin: 0;
-    font-size: 18px;
-    color: #333;
+.chat-message code {
+    font-family: monospace;
+    background: #f8f9fa;
+    padding: 2px 4px;
+    border-radius: 2px;
 }
 
-.wp-bedrock-widget-content {
-    padding: 20px;
+/* Fix jQuery UI Dialog in Frontend */
+.ui-dialog {
+    z-index: 999999 !important;
 }
 
-.wp-bedrock-widget-footer {
-    padding: 10px 15px;
-    border-top: 1px solid #ddd;
-    background: #f9f9f9;
-}
-
-.wp-bedrock-button {
-    display: inline-block;
-    padding: 8px 16px;
-    background: #0073aa;
-    color: #fff;
-    border: none;
-    border-radius: 3px;
-    cursor: pointer;
-    text-decoration: none;
-    font-size: 14px;
-    line-height: 1.5;
-    transition: background 0.3s ease;
-}
-
-.wp-bedrock-button:hover {
-    background: #005177;
-}
-
-.wp-bedrock-button:focus {
-    outline: none;
-    box-shadow: 0 0 0 1px #fff, 0 0 0 3px #0073aa;
+.ui-widget-overlay {
+    z-index: 999998 !important;
 }

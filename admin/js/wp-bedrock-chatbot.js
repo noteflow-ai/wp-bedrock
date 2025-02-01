@@ -3,7 +3,7 @@
  */
 
 // Debug mode check
-const isDebugMode = () => typeof wpbedrock_chat !== 'undefined' && wpbedrock_chat.debug_mode === '1';
+const isDebugMode = () => typeof wpbedrock !== 'undefined' && wpbedrock.debug_mode === '1';
 
 // Debug logging wrapper
 const debugLog = (...args) => {
@@ -12,11 +12,12 @@ const debugLog = (...args) => {
     }
 };
 
-async function initChatbot() {
+// Expose initialization function globally
+window.initializeChat = async function(container) {
     // Dependencies are loaded through WordPress enqueue system
     const requiredDeps = {
         'jQuery': () => typeof jQuery !== 'undefined',
-        'wpbedrock_chat': () => typeof wpbedrock_chat !== 'undefined',
+        'wpbedrock': () => typeof wpbedrock !== 'undefined',
         'markdownit': () => typeof window.markdownit !== 'undefined',
         'hljs': () => typeof window.hljs !== 'undefined',
         'jQuery UI Dialog': () => typeof jQuery !== 'undefined' && typeof jQuery.fn.dialog !== 'undefined',
@@ -37,12 +38,12 @@ async function initChatbot() {
     if (missing.length > 0) {
         if (window.wpBedrockInitAttempts < MAX_ATTEMPTS) {
             debugLog(`Waiting for libraries (attempt ${window.wpBedrockInitAttempts}/${MAX_ATTEMPTS}):`, missing.join(', '));
-            setTimeout(initChatbot, 100);
+            setTimeout(() => window.initializeChat(container), 100);
             return;
         } else {
             // Always log critical initialization failures
             console.error('[AI Chat for Amazon Bedrock] Failed to load required libraries:', missing.join(', '));
-            const container = document.querySelector('.chat-container');
+            container = container || document.querySelector('.chat-container');
             if (container) {
                 container.innerHTML = `
                     <div class="error-message" style="padding: 20px; color: #721c24; background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; margin: 10px;">
@@ -60,31 +61,32 @@ async function initChatbot() {
 
     debugLog('All dependencies loaded, initializing chatbot...');
     const $ = jQuery;
+    container = container || $('.chat-container');
 
     // Initialize chat manager with jQuery
-    const chatManager = new BedrockChatManager(wpbedrock_chat, {
-        chatContainer: $('.chat-container'),
-        messagesContainer: $('#wpaicg-chat-messages'),
-        messageInput: $('#wpaicg-chat-message'),
-        sendButton: $('#wpaicg-send-message'),
-        stopButton: $('#wpaicg-stop-message'),
-        imageUpload: $('#wpaicg-image-upload'),
-        imageTrigger: $('#wpaicg-image-trigger'),
-        imagePreview: $('#wpaicg-image-preview'),
-        previewImage: $('#wpaicg-preview-image'),
-        removeImageButton: $('#wpaicg-remove-image'),
-        clearChatButton: $('#clear-chat'),
-        refreshChatButton: $('#refresh-chat'),
-        exportChatButton: $('#export-chat'),
-        shareChatButton: $('#share-chat'),
-        fullscreenButton: $('#fullscreen-chat'),
-        settingsTrigger: $('#wpaicg-settings-trigger'),
-        promptTrigger: $('#wpaicg-prompt-trigger'),
-        maskTrigger: $('#wpaicg-mask-trigger'),
-        voiceTrigger: $('#wpaicg-voice-trigger'),
-        gridTrigger: $('#wpaicg-grid-trigger'),
-        layoutTrigger: $('#wpaicg-layout-trigger'),
-        messageCountDisplay: $('.message-count')
+    const chatManager = new BedrockChatManager(wpbedrock, {
+        chatContainer: container,
+        messagesContainer: container.find('#wpaicg-chat-messages'),
+        messageInput: container.find('#wpaicg-chat-message'),
+        sendButton: container.find('#wpaicg-send-message'),
+        stopButton: container.find('#wpaicg-stop-message'),
+        imageUpload: container.find('#wpaicg-image-upload'),
+        imageTrigger: container.find('#wpaicg-image-trigger'),
+        imagePreview: container.find('#wpaicg-image-preview'),
+        previewImage: container.find('#wpaicg-preview-image'),
+        removeImageButton: container.find('#wpaicg-remove-image'),
+        clearChatButton: container.find('#clear-chat'),
+        refreshChatButton: container.find('#refresh-chat'),
+        exportChatButton: container.find('#export-chat'),
+        shareChatButton: container.find('#share-chat'),
+        fullscreenButton: container.find('#fullscreen-chat'),
+        settingsTrigger: container.find('#wpaicg-settings-trigger'),
+        promptTrigger: container.find('#wpaicg-prompt-trigger'),
+        maskTrigger: container.find('#wpaicg-mask-trigger'),
+        voiceTrigger: container.find('#wpaicg-voice-trigger'),
+        gridTrigger: container.find('#wpaicg-grid-trigger'),
+        layoutTrigger: container.find('#wpaicg-layout-trigger'),
+        messageCountDisplay: container.find('.message-count')
     });
 
     // Initialize tools modal with jQuery
@@ -264,5 +266,9 @@ async function initChatbot() {
     chatManager.initialize();
 }
 
-// Start initialization
-initChatbot();
+// Initialize in admin context
+jQuery(document).ready(function($) {
+    if ($('body').hasClass('wp-admin')) {
+        window.initializeChat();
+    }
+});
