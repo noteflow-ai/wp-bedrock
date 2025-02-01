@@ -60,36 +60,39 @@ class WP_Bedrock_Activator {
         
         // Start output buffering to catch any potential output
         ob_start();
-        \dbDelta($sql);
-        ob_clean();
+        try {
+            \dbDelta($sql);
 
-        // Insert default settings if not exists
-        $table_name = $wpdb->prefix . 'wpbedrock';
-        $settings = $wpdb->get_row("SELECT * FROM $table_name WHERE name = 'wpbedrock_settings'");
-        
-        if (!$settings) {
-            ob_start();
-            try {
-                $wpdb->insert(
-                    $table_name,
-                    array(
-                        'name' => 'wpbedrock_settings',
-                        'aws_region' => 'us-east-1',
-                        'model_id' => 'us.anthropic.claude-3-haiku-20240307-v1',
-                        'temperature' => 0.7,
-                        'max_tokens' => 1000,
-                        'top_p' => 1,
-                        'frequency_penalty' => 0,
-                        'presence_penalty' => 0
-                    )
-                );
-                if ($wpdb->last_error) {
-                    throw new \Exception($wpdb->last_error);
+            // Insert default settings if not exists
+            $table_name = $wpdb->prefix . 'wpbedrock';
+            $settings = $wpdb->get_row("SELECT * FROM $table_name WHERE name = 'wpbedrock_settings'");
+            
+            if (!$settings) {
+                try {
+                    $wpdb->insert(
+                        $table_name,
+                        array(
+                            'name' => 'wpbedrock_settings',
+                            'aws_region' => 'us-east-1',
+                            'model_id' => 'us.anthropic.claude-3-haiku-20240307-v1',
+                            'temperature' => 0.7,
+                            'max_tokens' => 1000,
+                            'top_p' => 1,
+                            'frequency_penalty' => 0,
+                            'presence_penalty' => 0
+                        )
+                    );
+                    if ($wpdb->last_error) {
+                        throw new \Exception($wpdb->last_error);
+                    }
+                } catch (\Exception $e) {
+                    error_log('AI Chat for Amazon Bedrock activation error: ' . $e->getMessage());
                 }
-            } catch (\Exception $e) {
-                error_log('AI Chat for Amazon Bedrock activation error: ' . $e->getMessage());
             }
-            ob_clean();
+        } catch (\Exception $e) {
+            error_log('AI Chat for Amazon Bedrock activation error: ' . $e->getMessage());
+        } finally {
+            ob_end_clean();
         }
     }
 }

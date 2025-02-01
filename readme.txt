@@ -4,7 +4,7 @@ Tags: ai, chatbot, amazon, bedrock, claude, streaming
 Requires at least: 5.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.0.0
+Stable tag: 1.0.1
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
@@ -91,6 +91,9 @@ Yes, you can customize various aspects including the initial message, system pro
 3. Chat history view
 
 == Changelog ==
+
+= 1.0.1 =
+* Updated plugin name to comply with WordPress.org trademark guidelines
 
 = 1.0.0 =
 * Initial release
