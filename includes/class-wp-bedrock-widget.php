@@ -1,0 +1,50 @@
+<?php
+namespace WPBEDROCK;
+
+class WP_Bedrock_Widget extends \WP_Widget {
+    public function __construct() {
+        parent::__construct(
+            'wp_bedrock_widget',
+            __('AI Chat Widget', 'bedrock-ai-chat'),
+            array('description' => __('Add an AI chatbot to your sidebar', 'bedrock-ai-chat'))
+        );
+    }
+
+    public function widget($args, $instance) {
+        echo $args['before_widget'];
+        
+        if (!empty($instance['title'])) {
+            echo $args['before_title'] . apply_filters('widget_title', $instance['title']) . $args['after_title'];
+        }
+
+        // Get height from instance or use default
+        $height = !empty($instance['height']) ? $instance['height'] : '500px';
+        
+        // Include the chatbot template with custom height
+        include WPBEDROCK_PLUGIN_DIR . 'admin/partials/wp-bedrock-admin-chatbot.php';
+        
+        echo $args['after_widget'];
+    }
+
+    public function form($instance) {
+        $title = !empty($instance['title']) ? $instance['title'] : '';
+        $height = !empty($instance['height']) ? $instance['height'] : '500px';
+        ?>
+        <p>
+            <label for="<?php echo esc_attr($this->get_field_id('title')); ?>"><?php esc_html_e('Title:', 'bedrock-ai-chat'); ?></label>
+            <input class="widefat" id="<?php echo esc_attr($this->get_field_id('title')); ?>" name="<?php echo esc_attr($this->get_field_name('title')); ?>" type="text" value="<?php echo esc_attr($title); ?>">
+        </p>
+        <p>
+            <label for="<?php echo esc_attr($this->get_field_id('height')); ?>"><?php esc_html_e('Height:', 'bedrock-ai-chat'); ?></label>
+            <input class="widefat" id="<?php echo esc_attr($this->get_field_id('height')); ?>" name="<?php echo esc_attr($this->get_field_name('height')); ?>" type="text" value="<?php echo esc_attr($height); ?>" placeholder="500px">
+        </p>
+        <?php
+    }
+
+    public function update($new_instance, $old_instance) {
+        $instance = array();
+        $instance['title'] = (!empty($new_instance['title'])) ? strip_tags($new_instance['title']) : '';
+        $instance['height'] = (!empty($new_instance['height'])) ? strip_tags($new_instance['height']) : '500px';
+        return $instance;
+    }
+}
