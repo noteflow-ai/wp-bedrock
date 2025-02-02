@@ -1,0 +1,185 @@
+{
+    "tools": [
+      {
+        "openapi": "3.1.0",
+        "info": {
+          "title": "duckduckgo lite",
+          "description": "a search engine. useful for when you need to answer questions about current events. input should be a search query.",
+          "version": "v1.0.0"
+        },
+        "servers": [
+          {
+            "url": "https://lite.duckduckgo.com"
+          }
+        ],
+        "paths": {
+          "/lite/": {
+            "post": {
+              "operationId": "DuckDuckGoLiteSearch",
+              "description": "a search engine. useful for when you need to answer questions about current events. input should be a search query.",
+              "deprecated": false,
+              "parameters": [
+                {
+                  "name": "q",
+                  "in": "query",
+                  "required": true,
+                  "description": "keywords for query.",
+                  "schema": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "name": "s",
+                  "in": "query",
+                  "description": "can be `0`",
+                  "schema": {
+                    "type": "number"
+                  }
+                },
+                {
+                  "name": "o",
+                  "in": "query",
+                  "description": "can be `json`",
+                  "schema": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "name": "api",
+                  "in": "query",
+                  "description": "can be `d.js`",
+                  "schema": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "name": "kl",
+                  "in": "query",
+                  "description": "wt-wt, us-en, uk-en, ru-ru, etc. Defaults to `wt-wt`.",
+                  "schema": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "name": "bing_market",
+                  "in": "query",
+                  "description": "wt-wt, us-en, uk-en, ru-ru, etc. Defaults to `wt-wt`.",
+                  "schema": {
+                    "type": "string"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "components": {
+          "schemas": {}
+        }
+      },
+      {
+        "openapi": "3.1.0",
+        "info": {
+          "title": "arxiv search",
+          "description": "Run Arxiv search and get the article information.",
+          "version": "v1.0.0"
+        },
+        "servers": [
+          {
+            "url": "https://export.arxiv.org"
+          }
+        ],
+        "paths": {
+          "/api/query": {
+            "get": {
+              "operationId": "ArxivSearch",
+              "description": "Run Arxiv search and get the article information.",
+              "deprecated": false,
+              "parameters": [
+                {
+                  "name": "search_query",
+                  "in": "query",
+                  "required": true,
+                  "description": "same as the search_query parameter rules of the arxiv API.",
+                  "schema": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "name": "sortBy",
+                  "in": "query",
+                  "description": "can be `relevance`, `lastUpdatedDate`, `submittedDate`.",
+                  "schema": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "name": "sortOrder",
+                  "in": "query",
+                  "description": "can be either `ascending` or `descending`.",
+                  "schema": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "name": "start",
+                  "in": "query",
+                  "description": "the index of the first returned result.",
+                  "schema": {
+                    "type": "number"
+                  }
+                },
+                {
+                  "name": "max_results",
+                  "in": "query",
+                  "description": "the number of results returned by the query.",
+                  "schema": {
+                    "type": "number"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "components": {
+          "schemas": {}
+        }
+      },
+      {
+        "openapi": "3.1.0",
+        "info": {
+          "title": "WolframAlpha",
+          "description": "A wrapper around Wolfram Alpha. Useful for when you need to answer questions about Math, Science, Technology, Culture, Society and Everyday Life. Input should be a search query. If the result contains an image link, use the markdown syntax to return the image.",
+          "version": "v1.0.0"
+        },
+        "servers": [
+          {
+            "url": "https://www.wolframalpha.com"
+          }
+        ],
+        "paths": {
+          "/api/v1/llm-api": {
+            "get": {
+              "operationId": "Calculate",
+              "description": "A wrapper around Wolfram Alpha. Useful for when you need to answer questions about Math, Science, Technology, Culture, Society and Everyday Life. Input should be a search query. If the result contains an image link, use the markdown syntax to return the image.",
+              "deprecated": false,
+              "parameters": [
+                {
+                  "name": "input",
+                  "in": "query",
+                  "required": true,
+                  "description": "questions about Math, Science, Technology, Culture, Society and Everyday Life",
+                  "schema": {
+                    "type": "string"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "components": {
+          "schemas": {}
+        }
+      }
+    ]
+  }
+  

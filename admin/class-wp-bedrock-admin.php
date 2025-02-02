@@ -206,6 +206,10 @@ class WP_Bedrock_Admin {
         check_ajax_referer('wpbedrock_chat_nonce', 'nonce');
         
         try {
+            // Convert stream parameter to boolean
+            if (isset($_REQUEST['stream'])) {
+                $_REQUEST['stream'] = $_REQUEST['stream'] === '1';
+            }
             $result = $this->get_aws_client()->handle_chat_message($_REQUEST);
             if ($result['success']) {
                 wp_send_json_success($result['data']);
@@ -267,6 +271,39 @@ class WP_Bedrock_Admin {
         }
     }
 
+    private function get_tool_definition($url) {
+        $tools_json = file_get_contents(plugin_dir_path(__FILE__) . '../includes/tools.json');
+        $tools = json_decode($tools_json, true);
+        
+        if (!$tools || !isset($tools['tools'])) {
+            throw new Exception('Invalid tools configuration');
+        }
+
+        foreach ($tools['tools'] as $tool) {
+            $server_url = rtrim($tool['servers'][0]['url'], '/');
+            if (strpos($url, $server_url) === 0) {
+                return $tool;
+            }
+        }
+
+        throw new Exception('Tool not found for URL: ' . $url);
+    }
+
+    private function get_content_type($tool, $path, $method) {
+        $operation = $tool['paths'][$path][$method] ?? null;
+        if (!$operation) {
+            return 'application/json';
+        }
+
+        // Check for produces/consumes in OpenAPI spec
+        if (isset($operation['produces'][0])) {
+            return $operation['produces'][0];
+        }
+
+        // Default to JSON
+        return 'application/json';
+    }
+
     public function ajax_tool_proxy() {
         check_ajax_referer('wpbedrock_chat_nonce', 'nonce');
 
@@ -279,25 +316,92 @@ class WP_Bedrock_Admin {
                 throw new Exception('URL is required');
             }
 
+            // Get tool definition from tools.json
+            $tool = $this->get_tool_definition($url);
+            
+            // Get the path and operation from the URL
+            $server_url = rtrim($tool['servers'][0]['url'], '/');
+            $request_path = parse_url($url, PHP_URL_PATH);
+            
+            // Find matching path and method from tool definition
+            $matching_path = null;
+            $supported_method = null;
+            foreach ($tool['paths'] as $defined_path => $operations) {
+                // Remove trailing slashes for comparison
+                $clean_defined_path = rtrim($defined_path, '/');
+                $clean_request_path = rtrim($request_path, '/');
+                
+                if ($clean_defined_path === $clean_request_path) {
+                    $matching_path = $defined_path;
+                    // Get the first supported method if none specified
+                    $supported_method = $method === 'GET' ? 
+                        (isset($operations['get']) ? 'get' : array_key_first($operations)) :
+                        strtolower($method);
+                    break;
+                }
+            }
+
+            if (!$matching_path) {
+                throw new Exception("Path not found in tool definition");
+            }
+
+            // Use the supported method
+            $method = strtoupper($supported_method);
+
+            // Verify method is supported
+            if (!isset($tool['paths'][$matching_path][$supported_method])) {
+                throw new Exception("Method $method not supported for path: $matching_path");
+            }
+
+            // Get operation details
+            $operation = $tool['paths'][$matching_path][$supported_method];
+            $content_type = $this->get_content_type($tool, $matching_path, $method);
+
+            // Prepare request arguments
             $args = [
                 'method' => $method,
                 'timeout' => 30,
                 'redirection' => 5,
                 'httpversion' => '1.1',
                 'headers' => [
-                    'User-Agent' => 'WordPress/' . get_bloginfo('version'),
-                    'Accept' => '*/*'
+                    'User-Agent' => 'WordPress/WP-Bedrock',
+                    'Accept' => $content_type
                 ]
             ];
 
-            // Handle both GET and POST requests properly
+            // Handle parameters according to operation specification
             if ($method === 'POST') {
-                $args['headers']['Content-Type'] = 'application/x-www-form-urlencoded';
-                // Ensure params are properly encoded for POST
-                $args['body'] = is_array($params) ? http_build_query($params) : $params;
+                $args['headers']['Content-Type'] = $content_type;
+                if ($content_type === 'application/json') {
+                    $args['body'] = json_encode($params);
+                } else {
+                    $args['body'] = http_build_query($params);
+                }
             } else {
-                // For GET requests, ensure params are properly encoded in URL
-                $url = add_query_arg(is_array($params) ? array_map('urlencode', $params) : $params, $url);
+                // For GET requests, encode parameters according to parameter specifications
+                $query_params = [];
+                if (isset($operation['parameters']) && is_array($operation['parameters'])) {
+                    foreach ($operation['parameters'] as $param) {
+                        if (isset($params[$param['name']])) {
+                            $value = $params[$param['name']];
+                            if (isset($param['in']) && $param['in'] === 'query') {
+                                if (isset($param['schema']['type']) && 
+                                    ($param['schema']['type'] === 'object' || $param['schema']['type'] === 'array')) {
+                                    $query_params[$param['name']] = json_encode($value);
+                                } else {
+                                    $query_params[$param['name']] = (string)$value;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // If no parameters defined in OpenAPI spec, pass all params as query params
+                    foreach ($params as $name => $value) {
+                        $query_params[$name] = is_array($value) || is_object($value) ? 
+                            json_encode($value) : (string)$value;
+                    }
+                }
+                $url = add_query_arg($query_params, $url);
             }
 
             $response = wp_remote_request($url, $args);
@@ -309,11 +413,32 @@ class WP_Bedrock_Admin {
             $body = wp_remote_retrieve_body($response);
             $status = wp_remote_retrieve_response_code($response);
 
-            if ($status !== 200) {
-                throw new Exception('Tool request failed with status: ' . $status);
-            }
+            // Handle response based on status code
+            switch ($status) {
+                case 200:
+                    if ($content_type === 'application/json') {
+                        $decoded = json_decode($body);
+                        if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
+                            wp_send_json_success($body);
+                        } else {
+                            wp_send_json_success($decoded);
+                        }
+                    } else {
+                        wp_send_json_success($body);
+                    }
+                    break;
 
-            wp_send_json_success(json_decode($body));
+                case 202:
+                    wp_send_json([
+                        'success' => false,
+                        'status' => 202,
+                        'message' => 'Request accepted, processing'
+                    ]);
+                    break;
+
+                default:
+                    throw new Exception("Request failed with status: $status");
+            }
         } catch (Exception $e) {
             wp_send_json_error($e->getMessage());
         }

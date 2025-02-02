@@ -244,24 +244,16 @@ class WP_Bedrock_AWS {
             return $response;
         }
 
-        // Create a memory stream from the response content
+        // For non-streaming, return raw content
+        if (!$is_streaming) {
+            return $response_content;
+        }
+        
+        // For streaming, create a memory stream
         $stream = fopen('php://memory', 'r+');
         fwrite($stream, $response_content);
         rewind($stream);
         return $stream;
-
-        $meta = stream_get_meta_data($response);
-        foreach ($meta['wrapper_data'] as $header) {
-            if (preg_match('/^HTTP\/\d\.\d\s+(\d+)/', $header, $matches)) {
-                $status = intval($matches[1]);
-                if ($status >= 400) {
-                    throw new Exception("HTTP Error: $status");
-                }
-                break;
-            }
-        }
-
-        return $response;
     }
 
     private function execute_with_retry($operation) {
@@ -303,21 +295,39 @@ class WP_Bedrock_AWS {
                 throw new Exception('Invalid JSON');
             }
 
+            // Handle tool use responses first
+            if (isset($parsed['tool_calls']) || isset($parsed['function_call'])) {
+                $results[] = ['type' => 'tool_call', 'content' => $parsed];
+                return $results;
+            }
+
+            // Handle base64 encoded bytes
             if (isset($parsed['bytes'])) {
                 $decoded = base64_decode($parsed['bytes']);
                 try {
                     $decoded_json = json_decode($decoded, true);
-                    $results[] = $decoded_json;
+                    // Check for tool use in decoded JSON
+                    if (isset($decoded_json['tool_calls']) || isset($decoded_json['function_call'])) {
+                        $results[] = ['type' => 'tool_call', 'content' => $decoded_json];
+                    } else {
+                        $results[] = $decoded_json;
+                    }
                 } catch (Exception $e) {
                     $results[] = ['output' => $decoded];
                 }
                 return $results;
             }
 
+            // Handle body content
             if (isset($parsed['body']) && is_string($parsed['body'])) {
                 try {
                     $parsed_body = json_decode($parsed['body'], true);
-                    $results[] = $parsed_body;
+                    // Check for tool use in body
+                    if (isset($parsed_body['tool_calls']) || isset($parsed_body['function_call'])) {
+                        $results[] = ['type' => 'tool_call', 'content' => $parsed_body];
+                    } else {
+                        $results[] = $parsed_body;
+                    }
                 } catch (Exception $e) {
                     $results[] = ['output' => $parsed['body']];
                 }
@@ -338,7 +348,9 @@ class WP_Bedrock_AWS {
                             $decoded = base64_decode($parsed['bytes']);
                             try {
                                 $decoded_json = json_decode($decoded, true);
-                                if (isset($decoded_json['choices'][0]['message']['content'])) {
+                                if (isset($decoded_json['tool_calls']) || isset($decoded_json['function_call'])) {
+                                    $results[] = ['type' => 'tool_call', 'content' => $decoded_json];
+                                } else if (isset($decoded_json['choices'][0]['message']['content'])) {
                                     $results[] = ['output' => $decoded_json['choices'][0]['message']['content']];
                                 } else {
                                     $results[] = $decoded_json;
@@ -347,7 +359,12 @@ class WP_Bedrock_AWS {
                                 $results[] = ['output' => $decoded];
                             }
                         } else {
-                            $results[] = $parsed;
+                            // Check for tool use in event data
+                            if (isset($parsed['tool_calls']) || isset($parsed['function_call'])) {
+                                $results[] = ['type' => 'tool_call', 'content' => $parsed];
+                            } else {
+                                $results[] = $parsed;
+                            }
                         }
                     } catch (Exception $e) {
                         $this->log_debug('Event parse warning:', $e->getMessage());
@@ -373,6 +390,7 @@ class WP_Bedrock_AWS {
 
     private function process_stream($response, $callback = null) {
         $buffer = '';
+        $tool_id = null;
         
         while (!$response->eof()) {
             $chunk = $response->read(8192);
@@ -392,7 +410,113 @@ class WP_Bedrock_AWS {
                     $events = $this->parse_event_data($message);
                     foreach ($events as $event) {
                         if ($callback) {
-                            call_user_func($callback, $event);
+                            if (isset($event['type']) && $event['type'] === 'tool_call') {
+                                $model_id = get_option('wpbedrock_model_id');
+                                $tool_id = uniqid('call_');
+                                
+                                if (strpos($model_id, 'anthropic.claude') !== false) {
+                                    // Format for Claude
+                                    $tool_use = [
+                                        'role' => 'assistant',
+                                        'content' => [
+                                            [
+                                                'type' => 'tool_use',
+                                                'id' => $tool_id,
+                                                'name' => $event['content']['tool_calls'][0]['function']['name'] ?? 
+                                                        $event['content']['function_call']['name'] ?? '',
+                                                'input' => json_decode(
+                                                    $event['content']['tool_calls'][0]['function']['arguments'] ?? 
+                                                    $event['content']['function_call']['arguments'] ?? '{}',
+                                                    true
+                                                )
+                                            ]
+                                        ]
+                                    ];
+                                    call_user_func($callback, $tool_use);
+                                } else if (strpos($model_id, 'mistral.mistral') !== false) {
+                                    // Format for Mistral
+                                    $tool_use = [
+                                        'role' => 'assistant',
+                                        'content' => '',
+                                        'tool_calls' => [
+                                            [
+                                                'id' => $tool_id,
+                                                'function' => [
+                                                    'name' => $event['content']['tool_calls'][0]['function']['name'] ?? 
+                                                            $event['content']['function_call']['name'] ?? '',
+                                                    'arguments' => $event['content']['tool_calls'][0]['function']['arguments'] ?? 
+                                                                 $event['content']['function_call']['arguments'] ?? '{}'
+                                                ]
+                                            ]
+                                        ]
+                                    ];
+                                    call_user_func($callback, $tool_use);
+                                } else if (strpos($model_id, 'amazon.nova') !== false) {
+                                    // Format for Nova
+                                    $tool_use = [
+                                        'role' => 'assistant',
+                                        'content' => [
+                                            [
+                                                'toolUse' => [
+                                                    'toolUseId' => $tool_id,
+                                                    'name' => $event['content']['tool_calls'][0]['function']['name'] ?? 
+                                                            $event['content']['function_call']['name'] ?? '',
+                                                    'input' => json_decode(
+                                                        $event['content']['tool_calls'][0]['function']['arguments'] ?? 
+                                                        $event['content']['function_call']['arguments'] ?? '{}',
+                                                        true
+                                                    )
+                                                ]
+                                            ]
+                                        ]
+                                    ];
+                                    call_user_func($callback, $tool_use);
+                                }
+                            } else if (isset($event['type']) && $event['type'] === 'tool_result') {
+                                $model_id = get_option('wpbedrock_model_id');
+                                
+                                if (strpos($model_id, 'anthropic.claude') !== false && $tool_id) {
+                                    // Format for Claude
+                                    $tool_result = [
+                                        'role' => 'user',
+                                        'content' => [
+                                            [
+                                                'type' => 'tool_result',
+                                                'tool_use_id' => $tool_id,
+                                                'content' => $event['content']
+                                            ]
+                                        ]
+                                    ];
+                                    call_user_func($callback, $tool_result);
+                                } else {
+                                    call_user_func($callback, $event);
+                                }
+                            } else if (isset($event['output'])) {
+                                // Format text output based on model
+                                $model_id = get_option('wpbedrock_model_id');
+                                
+                                if (strpos($model_id, 'anthropic.claude') !== false) {
+                                    // Format for Claude
+                                    call_user_func($callback, [
+                                        'role' => 'assistant',
+                                        'content' => [
+                                            [
+                                                'type' => 'text',
+                                                'text' => $event['output']
+                                            ]
+                                        ]
+                                    ]);
+                                } else {
+                                    // Default format for other models
+                                    call_user_func($callback, [
+                                        'role' => 'assistant',
+                                        'content' => $event['output']
+                                    ]);
+                                }
+                            } else {
+                                // Pass other events as-is
+                                call_user_func($callback, $event);
+                            }
                         }
                     }
                 }
@@ -404,7 +528,113 @@ class WP_Bedrock_AWS {
             $events = $this->parse_event_data($buffer);
             foreach ($events as $event) {
                 if ($callback) {
-                    call_user_func($callback, $event);
+                    if (isset($event['type']) && $event['type'] === 'tool_call') {
+                        $model_id = get_option('wpbedrock_model_id');
+                        $tool_id = uniqid('call_');
+                        
+                        if (strpos($model_id, 'anthropic.claude') !== false) {
+                            // Format for Claude
+                            $tool_use = [
+                                'role' => 'assistant',
+                                'content' => [
+                                    [
+                                        'type' => 'tool_use',
+                                        'id' => $tool_id,
+                                        'name' => $event['content']['tool_calls'][0]['function']['name'] ?? 
+                                                $event['content']['function_call']['name'] ?? '',
+                                        'input' => json_decode(
+                                            $event['content']['tool_calls'][0]['function']['arguments'] ?? 
+                                            $event['content']['function_call']['arguments'] ?? '{}',
+                                            true
+                                        )
+                                    ]
+                                ]
+                            ];
+                            call_user_func($callback, $tool_use);
+                        } else if (strpos($model_id, 'mistral.mistral') !== false) {
+                            // Format for Mistral
+                            $tool_use = [
+                                'role' => 'assistant',
+                                'content' => '',
+                                'tool_calls' => [
+                                    [
+                                        'id' => $tool_id,
+                                        'function' => [
+                                            'name' => $event['content']['tool_calls'][0]['function']['name'] ?? 
+                                                    $event['content']['function_call']['name'] ?? '',
+                                            'arguments' => $event['content']['tool_calls'][0]['function']['arguments'] ?? 
+                                                         $event['content']['function_call']['arguments'] ?? '{}'
+                                        ]
+                                    ]
+                                ]
+                            ];
+                            call_user_func($callback, $tool_use);
+                        } else if (strpos($model_id, 'amazon.nova') !== false) {
+                            // Format for Nova
+                            $tool_use = [
+                                'role' => 'assistant',
+                                'content' => [
+                                    [
+                                        'toolUse' => [
+                                            'toolUseId' => $tool_id,
+                                            'name' => $event['content']['tool_calls'][0]['function']['name'] ?? 
+                                                    $event['content']['function_call']['name'] ?? '',
+                                            'input' => json_decode(
+                                                $event['content']['tool_calls'][0]['function']['arguments'] ?? 
+                                                $event['content']['function_call']['arguments'] ?? '{}',
+                                                true
+                                            )
+                                        ]
+                                    ]
+                                ]
+                            ];
+                            call_user_func($callback, $tool_use);
+                        }
+                    } else if (isset($event['type']) && $event['type'] === 'tool_result') {
+                        $model_id = get_option('wpbedrock_model_id');
+                        
+                        if (strpos($model_id, 'anthropic.claude') !== false && $tool_id) {
+                            // Format for Claude
+                            $tool_result = [
+                                'role' => 'user',
+                                'content' => [
+                                    [
+                                        'type' => 'tool_result',
+                                        'tool_use_id' => $tool_id,
+                                        'content' => $event['content']
+                                    ]
+                                ]
+                            ];
+                            call_user_func($callback, $tool_result);
+                        } else {
+                            call_user_func($callback, $event);
+                        }
+                    } else if (isset($event['output'])) {
+                        // Format text output based on model
+                        $model_id = get_option('wpbedrock_model_id');
+                        
+                        if (strpos($model_id, 'anthropic.claude') !== false) {
+                            // Format for Claude
+                            call_user_func($callback, [
+                                'role' => 'assistant',
+                                'content' => [
+                                    [
+                                        'type' => 'text',
+                                        'text' => $event['output']
+                                    ]
+                                ]
+                            ]);
+                        } else {
+                            // Default format for other models
+                            call_user_func($callback, [
+                                'role' => 'assistant',
+                                'content' => $event['output']
+                            ]);
+                        }
+                    } else {
+                        // Pass other events as-is
+                        call_user_func($callback, $event);
+                    }
                 }
             }
         }
@@ -447,9 +677,34 @@ class WP_Bedrock_AWS {
             $data = is_string($response) ? json_decode($response, true) : $response;
             if (!is_array($data)) return '';
 
+            // Check for tool calls first
+            if (isset($data['tool_calls'])) {
+                return [
+                    'type' => 'tool_use',
+                    'name' => $data['tool_calls'][0]['function']['name'],
+                    'input' => $data['tool_calls'][0]['function']['arguments']
+                ];
+            }
+            if (isset($data['function_call'])) {
+                return [
+                    'type' => 'tool_use',
+                    'name' => $data['function_call']['name'],
+                    'input' => $data['function_call']['arguments']
+                ];
+            }
+
             // Claude models
             if (strpos($model_id, 'anthropic.claude') !== false) {
                 if (isset($data['content']) && is_array($data['content'])) {
+                    foreach ($data['content'] as $content) {
+                        if ($content['type'] === 'tool_use') {
+                            return [
+                                'type' => 'tool_use',
+                                'name' => $content['name'],
+                                'input' => $content['input']
+                            ];
+                        }
+                    }
                     return implode('', array_map(function($content) {
                         return $content['type'] === 'text' ? ($content['text'] ?? '') : '';
                     }, $data['content']));
@@ -458,16 +713,39 @@ class WP_Bedrock_AWS {
             
             // Mistral models
             if (strpos($model_id, 'mistral.mistral') !== false) {
+                if (isset($data['choices'][0]['message']['function_call'])) {
+                    $function_call = $data['choices'][0]['message']['function_call'];
+                    return [
+                        'type' => 'tool_use',
+                        'name' => $function_call['name'],
+                        'input' => $function_call['arguments']
+                    ];
+                }
                 return $data['choices'][0]['message']['content'] ?? '';
             }
             
             // Nova models
             if (strpos($model_id, 'us.amazon.nova') !== false) {
+                if (isset($data['results'][0]['toolCalls'])) {
+                    $tool_call = $data['results'][0]['toolCalls'][0];
+                    return [
+                        'type' => 'tool_use',
+                        'name' => $tool_call['name'],
+                        'input' => $tool_call['arguments']
+                    ];
+                }
                 return $data['results'][0]['outputText'] ?? '';
             }
             
             // Llama models
             if (strpos($model_id, 'meta.llama') !== false) {
+                if (isset($data['tool_calls'])) {
+                    return [
+                        'type' => 'tool_use',
+                        'name' => $data['tool_calls'][0]['name'],
+                        'input' => $data['tool_calls'][0]['arguments']
+                    ];
+                }
                 return $data['generation'] ?? '';
             }
 
@@ -487,24 +765,37 @@ class WP_Bedrock_AWS {
 
             $model_id = $request_data['model_id'] ?? get_option('wpbedrock_model_id');
             $stream = isset($request_data['stream']) && $request_data['stream'] === '1';
+            $tool_id = null;
 
             if ($stream) {
                 $this->setup_stream_environment();
                 
-                $this->invoke_model($request_body, $model_id, true, function($chunk) use ($model_id) {
-                    $content = $this->extract_content($chunk, $model_id);
-                    if ($content) {
-                        $this->send_sse_message(['text' => $content]);
-                    }
+                $this->invoke_model($request_body, $model_id, true, function($chunk) use ($model_id, &$tool_id) {
+                    // Send raw chunk to frontend for processing
+                    $this->send_sse_message($chunk);
                 });
                 
                 $this->send_sse_message(['done' => true]);
                 exit;
             } else {
+                // For non-streaming, parse response and return
+                
+
                 $response = $this->invoke_model($request_body, $model_id);
+                $result = json_decode($response, true);
+                if ($result === null && json_last_error() !== JSON_ERROR_NONE) {
+                    throw new Exception('Failed to decode response: ' . json_last_error_msg());
+                }
+                
+          
+                
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    $this->log_debug('Non-streaming response:', $this->sanitize_log_data($result));
+                }
+                
                 return [
                     'success' => true,
-                    'data' => $response
+                    'data' => $result
                 ];
             }
         } catch (Exception $e) {
@@ -536,21 +827,9 @@ class WP_Bedrock_AWS {
                 $this->process_stream($response, $callback);
                 return null;
             } else {
-                $response = $this->execute_with_retry(function() use ($url, $request_body) {
+                return $this->execute_with_retry(function() use ($url, $request_body) {
                     return $this->make_request($url, 'POST', $request_body, false);
                 });
-
-                $response_content = stream_get_contents($response);
-                $result = json_decode($response_content, true);
-                
-                if ($result === null && json_last_error() !== JSON_ERROR_NONE) {
-                    throw new Exception('Failed to decode response: ' . json_last_error_msg());
-                }
-
-                if (defined('WP_DEBUG') && WP_DEBUG) {
-                    $this->log_debug('Non-streaming response:', $this->sanitize_log_data($result));
-                }
-                return $result;
             }
         } catch (Exception $e) {
             throw new Exception('Error invoking Bedrock model: ' . $e->getMessage());

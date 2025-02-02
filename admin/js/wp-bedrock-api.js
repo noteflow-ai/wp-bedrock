@@ -151,16 +151,7 @@ class BedrockAPI {
         const systemMessages = messages.filter(msg => msg.role === 'system');
         const userMessages = messages.filter(msg => msg.role === 'user');
         const assistantMessages = messages.filter(msg => msg.role === 'assistant');
-        const toolMessages = messages.filter(msg => msg.role === 'tool');
-
-        // Process tool messages to ensure proper format
-        const processedToolMessages = toolMessages.map(msg => {
-            if (!msg.turnIndex) {
-                // If no turn index, try to infer it from message position
-                msg.turnIndex = Math.floor(messages.indexOf(msg) / 2);
-            }
-            return this.normalizeToolMessage(msg);
-        });
+       
         
         let normalizedMessages = [];
 
@@ -187,9 +178,6 @@ class BedrockAPI {
                     if (messageIndex < assistantMessages.length) {
                         normalizedMessages.push(assistantMessages[messageIndex]);
                     }
-                    // Add any tool messages for this turn
-                    const turnToolMessages = toolMessages.filter(msg => msg.turnIndex === messageIndex);
-                    normalizedMessages.push(...turnToolMessages);
                     messageIndex++;
                 }
             }
@@ -226,6 +214,115 @@ class BedrockAPI {
         return normalizedMessages;
     }
 
+    // Format tool use based on model type
+    static formatToolUse(toolCall, modelId, toolId = null) {
+        if (!toolId) {
+            toolId = `call_${Date.now()}`;
+        }
+
+        if (modelId.includes('anthropic.claude')) {
+            return {
+                role: 'assistant',
+                content: [{
+                    type: 'tool_use',
+                    id: toolId,
+                    name: toolCall.name,
+                    input: typeof toolCall.arguments === 'string' ? 
+                        JSON.parse(toolCall.arguments) : toolCall.arguments
+                }]
+            };
+        }
+
+        if (modelId.includes('mistral.mistral')) {
+            return {
+                role: 'assistant',
+                content: '',
+                tool_calls: [{
+                    id: toolId,
+                    function: {
+                        name: toolCall.name,
+                        arguments: typeof toolCall.arguments === 'string' ? 
+                            toolCall.arguments : JSON.stringify(toolCall.arguments)
+                    }
+                }]
+            };
+        }
+
+        if (modelId.includes('amazon.nova')) {
+            return {
+                role: 'assistant',
+                content: [{
+                    toolUse: {
+                        toolUseId: toolId,
+                        name: toolCall.name,
+                        input: typeof toolCall.arguments === 'string' ? 
+                            JSON.parse(toolCall.arguments) : toolCall.arguments
+                    }
+                }]
+            };
+        }
+
+        return null;
+    }
+
+    // Format tool result based on model type
+    static formatToolResult(toolResult, modelId) {
+        if (modelId.includes('anthropic.claude')) {
+            return {
+                role: 'user',
+                content: [{
+                    type: 'tool_result',
+                    tool_use_id: toolResult.tool_call_id,
+                    content: toolResult.content
+                }]
+            };
+        }
+
+        if (modelId.includes('mistral.mistral')) {
+            return {
+                role: 'tool',
+                tool_call_id: toolResult.tool_call_id,
+                content: toolResult.content
+            };
+        }
+
+        if (modelId.includes('amazon.nova')) {
+            return {
+                role: 'user',
+                content: [{
+                    toolResult: {
+                        toolUseId: toolResult.tool_call_id,
+                        content: [{
+                            json: {
+                                content: toolResult.content
+                            }
+                        }]
+                    }
+                }]
+            };
+        }
+
+        return null;
+    }
+
+    // Format text content based on model type
+    static formatTextContent(text, modelId) {
+        if (modelId.includes('anthropic.claude')) {
+            return {
+                role: 'assistant',
+                content: [{
+                    type: 'text',
+                    text: text
+                }]
+            };
+        }
+
+        return {
+            role: 'assistant',
+            content: text
+        };
+    }
+
     // Format request body based on model type
     static formatRequestBody(messages, modelConfig, tools = []) {
         if (!Array.isArray(messages)) {
@@ -236,12 +333,21 @@ class BedrockAPI {
             throw new Error('Model ID is required');
         }
 
+   
+
         const model = modelConfig.model;
         
-        // Normalize messages based on model requirements
-        const normalizedMessages = this.normalizeMessages(messages, model);
-
-        // Format messages based on model type
+        // Normalize and filter messages based on model
+        let normalizedMessages = this.normalizeMessages(messages, model);
+        
+        // For Claude, ensure the last message is not from assistant when using tools
+        if (model.includes("anthropic.claude") && tools?.length > 0) {
+            if (normalizedMessages[normalizedMessages.length - 1]?.role === 'assistant') {
+                normalizedMessages = normalizedMessages.slice(0, -1);
+            }
+        }
+        
+        // Format final request based on model type
         if (model.includes("anthropic.claude")) {
             return this.formatClaudeRequest(normalizedMessages, modelConfig, tools);
         } else if (model.includes("amazon.nova")) {
@@ -259,125 +365,138 @@ class BedrockAPI {
 
     // Model-specific formatters
     static formatClaudeRequest(messages, modelConfig, tools = []) {
-        const keys = ["system", "user"];
-        // roles must alternate between "user" and "assistant" in claude, so add a fake assistant message between two user messages
-        for (let i = 0; i < messages.length - 1; i++) {
-            const message = messages[i];
-            const nextMessage = messages[i + 1];
-            
-            if (keys.includes(message.role) && keys.includes(nextMessage.role)) {
-                messages[i] = [
-                    message,
-                    {
-                        role: "assistant",
-                        content: ";"
-                    }
-                ];
-            }
-        }
+        // First filter out empty messages and format content
+        const validMessages = messages.filter(msg => {
+            if (!msg.content) return false;
+            if (typeof msg.content === "string" && !msg.content.trim()) return false;
+            if (Array.isArray(msg.content) && msg.content.length === 0) return false;
+            return true;
+        });
 
-        const formattedMessages = messages
-            .flat()
-            .filter(v => {
-                if (!v.content) return false;
-                if (typeof v.content === "string" && !v.content.trim()) return false;
-                return true;
-            })
-            .map(v => {
-                const { role, content } = v;
-                const mappedRole = this.ClaudeMapper[role] || "user";
+        // Format each message's content
+        const formattedMessages = validMessages.map(msg => {
+            const { role, content } = msg;
+            const mappedRole = this.ClaudeMapper[role] || "user";
 
-                if (typeof content === "string") {
+            // Convert array content to string for Claude
+            if (Array.isArray(content)) {
+                const textContent = content
+                    .filter(item => {
+                        if (item.type === "text" || item.text) return true;
+                        if (item.type === "tool_use") return true;
+                        if (item.type === "tool_result") return true;
+                        return false;
+                    })
+                    .map(item => {
+                        if (item.type === "text" || item.text) {
+                            return item.text || "";
+                        }
+                        if (item.type === "tool_use") {
+                            return `Using tool: ${item.name}\nInput: ${JSON.stringify(item.input)}`;
+                        }
+                        if (item.type === "tool_result") {
+                            return `Tool result: ${JSON.stringify(item.content)}`;
+                        }
+                        return "";
+                    })
+                    .filter(text => text.trim())
+                    .join("\n");
+                
+                if (textContent) {
                     return {
                         role: mappedRole,
-                        content: content
+                        content: textContent
                     };
                 }
+                return null;
+            }
 
-                // Handle array content (text, images, and tools)
+            // Handle string content
+            if (typeof content === "string") {
                 return {
                     role: mappedRole,
                     content: content
-                        .filter(item => item.image_url || item.text || item.type === 'tool_use' || item.type === 'tool_result')
-                        .map(item => {
-                            // Handle text content
-                            if (item.type === "text" || item.text) {
-                                return {
-                                    type: "text",
-                                    text: item.text
-                                };
-                            }
-
-                            // Handle image content
-                            if (item.image_url?.url) {
-                                const { url = "" } = item.image_url;
-                                const colonIndex = url.indexOf(":");
-                                const semicolonIndex = url.indexOf(";");
-                                const comma = url.indexOf(",");
-
-                                const mimeType = url.slice(colonIndex + 1, semicolonIndex);
-                                const encodeType = url.slice(semicolonIndex + 1, comma);
-                                const data = url.slice(comma + 1);
-
-                                return {
-                                    type: "image",
-                                    source: {
-                                        type: encodeType,
-                                        media_type: mimeType,
-                                        data
-                                    }
-                                };
-                            }
-
-                            // Handle tool use
-                            if (item.type === 'tool_use') {
-                                return {
-                                    type: 'tool_use',
-                                    id: item.id,
-                                    name: item.name,
-                                    input: typeof item.input === 'string' ? 
-                                        JSON.parse(item.input) : item.input
-                                };
-                            }
-
-                            // Handle tool result
-                            if (item.type === 'tool_result') {
-                                return {
-                                    type: 'tool_result',
-                                    tool_use_id: item.tool_use_id,
-                                    content: item.content
-                                };
-                            }
-
-                            return null;
-                        })
-                        .filter(Boolean)
                 };
-            });
+            }
+
+            // Handle object content
+            if (content && typeof content === "object") {
+                if (content.type === "text" || content.text) {
+                    const text = content.text || content.content;
+                    if (text && text.trim()) {
+                        return {
+                            role: mappedRole,
+                            content: text
+                        };
+                    }
+                }
+
+                // Handle tool use
+                if (content.type === "tool_use") {
+                    return {
+                        role: mappedRole,
+                        content: `Using tool: ${content.name}\nInput: ${JSON.stringify(content.input)}`
+                    };
+                }
+
+                // Handle tool result
+                if (content.type === "tool_result") {
+                    return {
+                        role: mappedRole,
+                        content: `Tool result: ${JSON.stringify(content.content)}`
+                    };
+                }
+            }
+
+            return null;
+        }).filter(msg => msg !== null);
+
+        // Ensure messages alternate between user and assistant
+        const finalMessages = [];
+        let lastRole = null;
+
+        for (const msg of formattedMessages) {
+            if (msg.role === lastRole) {
+                // If same role appears twice, add an empty response from the other role
+                finalMessages.push({
+                    role: msg.role === "user" ? "assistant" : "user",
+                    content: "Continuing the conversation..."
+                });
+            }
+            finalMessages.push(msg);
+            lastRole = msg.role;
+        }
 
         // Ensure first message is from user
-        if (formattedMessages[0]?.role === "assistant") {
-            formattedMessages.unshift({
+        if (finalMessages[0]?.role === "assistant") {
+            finalMessages.unshift({
                 role: "user",
-                content: ";"
+                content: "Starting the conversation..."
             });
         }
 
-        return {
-                messages: formattedMessages,
-                max_tokens: Number(modelConfig.max_tokens || 2000),
-                temperature: Number(modelConfig.temperature || 0.7),
-                top_p: Number(modelConfig.top_p || 0.9),
-                anthropic_version: "bedrock-2023-05-31",
-                ...(tools.length > 0 && {
-                    tools: tools.map(tool => ({
-                        name: (tool?.function?.name || "").toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_-]/g, ''),
-                        description: tool?.function?.description || "",
-                        input_schema: tool?.function?.parameters || {}
-                    }))
-                })
-            
+        // Ensure required Claude parameters are present
+        const requestBody = {
+            messages: finalMessages,
+            max_tokens: Number(modelConfig.max_tokens || 2000),
+            temperature: Number(modelConfig.temperature || 0.7),
+            top_p: Number(modelConfig.top_p || 0.9),
+            anthropic_version: modelConfig.anthropic_version || "bedrock-2023-05-31"
         };
+
+        // Add tools if present
+        if (tools.length > 0) {
+            requestBody.tools = tools.map(tool => ({
+                name: (tool?.function?.name || "").toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_-]/g, ''),
+                description: tool?.function?.description || "",
+                input_schema: tool?.function?.parameters || {}
+            }));
+        }
+
+        // Log request for debugging
+        console.log('[BedrockAPI] Claude request:', JSON.stringify(requestBody, null, 2));
+
+        return requestBody;
     }
 
     static formatNovaRequest(messages, modelConfig, tools = []) {
@@ -592,7 +711,6 @@ class BedrockAPI {
         // Get user and assistant messages
         const userMessages = messageHistory.filter(msg => msg.role === 'user');
         const assistantMessages = messageHistory.filter(msg => msg.role === 'assistant');
-        const toolMessages = messageHistory.filter(msg => msg.role === 'tool');
 
         // Ensure we have at least one user message
         if (userMessages.length === 0) {
@@ -600,7 +718,10 @@ class BedrockAPI {
                 messages,
                 {
                     model: config.default_model,
-                    temperature: Number(config.default_temperature || 0.7)
+                    temperature: Number(config.default_temperature || 0.7),
+                    max_tokens: 2000,
+                    top_p: 0.9,
+                    anthropic_version: "bedrock-2023-05-31"
                 },
                 selectedTools
             );
@@ -617,9 +738,6 @@ class BedrockAPI {
             if (messageIndex < assistantMessages.length) {
                 messages.push(assistantMessages[messageIndex]);
             }
-            // Add any tool messages for this turn
-            const turnToolMessages = toolMessages.filter(msg => msg.turnIndex === messageIndex);
-            messages.push(...turnToolMessages);
             messageIndex++;
         }
 
@@ -627,7 +745,10 @@ class BedrockAPI {
             messages,
             {
                 model: config.default_model,
-                temperature: Number(config.default_temperature || 0.7)
+                temperature: Number(config.default_temperature || 0.7),
+                max_tokens: 2000,
+                top_p: 0.9,
+                anthropic_version: "bedrock-2023-05-31"
             },
             selectedTools
         );

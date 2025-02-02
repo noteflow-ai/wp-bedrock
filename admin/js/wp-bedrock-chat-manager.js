@@ -28,7 +28,7 @@ class BedrockChatManager {
         // Set up response handler callbacks based on streaming configuration
         if (this.config.enable_stream) {
             this.responseHandler.setCallbacks({
-                onContent: (data) => this.handleStreamContent(data),
+                onContent: (data) => this.handleContent(data, true),
                 onError: (error) => this.handleError(error),
                 onComplete: () => this.handleStreamComplete(),
                 onRetry: (retryCount, error) => this.handleRetry(retryCount, error),
@@ -145,9 +145,9 @@ class BedrockChatManager {
         }
     }
 
-    // Handle stream content with improved tool handling
-    handleStreamContent(data) {
-        console.log('[BedrockChatManager] Stream content:', data);
+    // Handle content from both streaming and non-streaming responses
+    handleContent(data, isStreaming = false) {
+        console.log(`[BedrockChatManager] ${isStreaming ? 'Stream' : 'Non-stream'} content:`, data);
         
         // Ensure data is properly structured
         if (!data || !data.type) {
@@ -165,7 +165,7 @@ class BedrockChatManager {
                         role: data.role || 'assistant'
                     };
                 }
-                this.handleTextContent(data);
+                this.handleTextContent(data, isStreaming);
                 break;
 
             case 'tool_call':
@@ -173,6 +173,10 @@ class BedrockChatManager {
                 break;
 
             case 'tool_result':
+                // Mark streaming tool results
+                if (isStreaming) {
+                    data.content.isStreaming = true;
+                }
                 this.handleToolResult(data.content);
                 break;
 
@@ -183,16 +187,16 @@ class BedrockChatManager {
         this.scrollToBottom();
     }
 
-    // Handle text content
-    handleTextContent(data) {
+    // Handle text content for both streaming and non-streaming
+    handleTextContent(data, isStreaming = false) {
         const content = typeof data.content === 'object' ? data.content.text || data.content.content || '' : data.content || '';
         const role = data.role || 'assistant';
         
-        console.log('[BedrockChatManager] Handling text content:', { content, role });
+        console.log('[BedrockChatManager] Handling text content:', { content, role, isStreaming });
 
         const lastMessage = this.elements.messagesContainer.find('.chat-message:last');
-        if (lastMessage.hasClass('ai') && role === 'assistant') {
-            // Update existing assistant message
+        if (lastMessage.hasClass('ai') && role === 'assistant' && isStreaming) {
+            // Update existing assistant message for streaming
             const messageContent = lastMessage.find('.message-content');
             const currentText = messageContent.text();
             messageContent.html(this.formatMessage(currentText + content));
@@ -205,7 +209,7 @@ class BedrockChatManager {
                     text: currentText + content 
                 }];
             }
-        } else if (content) { // Only create new message if we have content
+        } else if (content) { // Create new message for non-streaming or new streaming message
             // Create new message
             const message = this.createMessageElement(role, content);
             this.elements.messagesContainer.append(message);
@@ -220,84 +224,143 @@ class BedrockChatManager {
         }
     }
 
+
     // Handle tool call
-    handleToolCall(toolCall) {
+    async handleToolCall(toolCall) {
         console.log('[BedrockChatManager] Tool call:', toolCall);
         
-        // Format tool call for Claude
-        const formattedToolCall = {
-            role: 'assistant',
-            content: [{
-                type: 'tool_use',
-                id: `call_${Date.now()}`,
-                name: toolCall.name,
-                input: typeof toolCall.arguments === 'string' ? 
-                    JSON.parse(toolCall.arguments) : toolCall.arguments
-            }]
-        };
+        const toolCallId = `call_${Date.now()}`;
+        
+        try {
+            // Create tool call message element
+            const message = this.createMessageElement(
+                'tool',
+                this.formatToolMessage({
+                    type: 'tool_call',
+                    name: toolCall.name,
+                    arguments: toolCall.arguments
+                })
+            );
+            this.elements.messagesContainer.append(message);
+            this.scrollToBottom();
 
-        // Create tool call message element
-        const message = this.createMessageElement(
-            'tool',
-            this.formatToolMessage({
-                type: 'tool_call',
-                name: toolCall.name,
-                arguments: toolCall.arguments
-            })
-        );
-        this.elements.messagesContainer.append(message);
+            let result;
+            try {
+                // Execute tool call
+                result = await this.executeToolCall(toolCall.name, toolCall.arguments);
+            } catch (error) {
+                // If tool execution fails, create an error result
+                result = {
+                    error: true,
+                    message: error.message || 'Tool execution failed'
+                };
+            }
+            
+            // Create tool result message element
+            const resultMessage = this.createMessageElement(
+                'tool',
+                this.formatToolMessage({
+                    type: 'tool_result',
+                    name: toolCall.name,
+                    result: result
+                })
+            );
+            this.elements.messagesContainer.append(resultMessage);
+            this.scrollToBottom();
 
-        // Add to message history
-        if (this.messageHistory.some(msg => msg.role === 'user')) {
-            this.messageHistory.push(formattedToolCall);
+            // Add tool result to history
+            this.messageHistory.push({
+                role: 'user',
+                content: [{
+                    type: 'tool_result',
+                    tool_use_id: toolCallId,
+                    content: result.error ? 
+                        { error: result.message } : 
+                        result
+                }]
+            });
+
+            // Get model's response to tool result
+            const requestBody = BedrockAPI.formatRequestBody(
+                this.messageHistory,
+                {
+                    model: this.config.default_model,
+                    temperature: Number(this.config.default_temperature || 0.7),
+                    max_tokens: 2000,
+                    top_p: 0.9,
+                    anthropic_version: "bedrock-2023-05-31"
+                },
+                this.selectedTools
+            );
+            
+            // Send non-streaming request
+            const response = await this.sendNonStreamingRequest(requestBody);
+            await this.handleResponse(response, false);
+
+            this.updateMessageCount();
+            this.scrollToBottom();
+        } catch (error) {
+            this.handleError(error);
+            this.setProcessingState(false);
         }
-
-        // Execute tool call
-        Promise.all([formattedToolCall.content[0]].map(tool => {
-            return this.executeToolCall(tool.name, tool.input)
-                .then(result => ({
-                    tool_call_id: tool.id,
-                    name: tool.name,
-                    content: result
-                }));
-        })).then(toolResults => {
-            toolResults.forEach(result => this.handleToolResult(result));
-        }).catch(error => this.handleError(error));
     }
 
     // Handle tool result
-    handleToolResult(toolResult) {
+    async handleToolResult(toolResult) {
         console.log('[BedrockChatManager] Tool result:', toolResult);
         
-        // Format tool result for Claude
-        const formattedToolResult = {
-            role: 'user',
-            content: [{
-                type: 'tool_result',
-                tool_use_id: toolResult.tool_call_id,
-                content: toolResult.content
-            }]
-        };
+        try {
+            // Create tool result message element
+            const message = this.createMessageElement(
+                'tool',
+                this.formatToolMessage({
+                    type: 'tool_result',
+                    name: toolResult.name,
+                    result: toolResult.content
+                })
+            );
+            this.elements.messagesContainer.append(message);
+            this.scrollToBottom();
 
-        // Create tool result message element
-        const message = this.createMessageElement(
-            'tool',
-            this.formatToolMessage({
-                type: 'tool_result',
-                name: toolResult.name,
-                result: toolResult.content
-            })
-        );
-        this.elements.messagesContainer.append(message);
+            // Only update message history for streaming tool results
+            // Non-streaming tool results are handled by handleToolCall
+            if (toolResult.isStreaming) {
+                const toolCallId = `call_${Date.now()}`;
+                
+                // Add tool result to history
+                this.messageHistory.push({
+                    role: 'user',
+                    content: [{
+                        type: 'tool_result',
+                        tool_use_id: toolCallId,
+                        content: toolResult.content
+                    }]
+                });
 
-        // Add to message history
-        if (this.messageHistory.some(msg => msg.role === 'user')) {
-            this.messageHistory.push(formattedToolResult);
+                // Get model's response to tool result
+                const requestBody = BedrockAPI.formatRequestBody(
+                    this.messageHistory,
+                    {
+                        model: this.config.default_model,
+                        temperature: Number(this.config.default_temperature || 0.7),
+                        max_tokens: 2000,
+                        top_p: 0.9,
+                        anthropic_version: "bedrock-2023-05-31"
+                    },
+                    this.selectedTools
+                );
+                
+                // Send non-streaming request
+                const response = await this.sendNonStreamingRequest(requestBody);
+                await this.handleResponse(response, false);
+
+                this.updateMessageCount();
+                this.scrollToBottom();
+            }
+        } catch (error) {
+            this.handleError(error);
+            this.setProcessingState(false);
         }
-
-        // Process tool message and continue conversation
-        const requestBody = BedrockAPI.prepareRequestMessages(this.config, this.messageHistory, this.selectedTools);
-        this.sendMessage();
     }
 
     // Format tool message for display
@@ -393,7 +456,7 @@ class BedrockChatManager {
                 await this.responseHandler.startStreaming(streamUrl, requestBody);
             } else {
                 const response = await this.sendNonStreamingRequest(requestBody);
-                await this.handleNonStreamingResponse(response);
+                await this.handleResponse(response, false);
             }
 
         } catch (error) {
@@ -471,8 +534,8 @@ class BedrockChatManager {
         return response;
     }
 
-    // Handle non-streaming response
-    async handleNonStreamingResponse(response) {
+    // Handle response from both streaming and non-streaming
+    async handleResponse(response, isStreaming = false) {
         try {
             if (!response || !response.success) {
                 throw new Error(response?.data || 'Invalid response from server');
@@ -484,134 +547,199 @@ class BedrockChatManager {
                     for (const item of response.data.content) {
                         if (item.type === 'text') {
                             // Handle text content
-                            this.handleTextContent({
+                            this.handleContent({
                                 type: 'text',
                                 content: item.text,
                                 role: 'assistant'
-                            });
+                            }, isStreaming);
                         } else if (item.type === 'tool_use') {
-                            // Generate tool call ID
-                            const toolCallId = `call_${Date.now()}`;
-                            
-                            // First display the tool call
-                            this.handleToolCall({
-                                id: toolCallId,
-                                name: item.name,
-                                arguments: item.input
-                            });
-                            
-                            // Execute the tool call
-                            const toolResult = await this.executeToolCall(item.name, item.input);
-                            
-                            // Display tool result
-                            this.handleToolResult({
-                                tool_call_id: toolCallId,
-                                name: item.name,
-                                content: toolResult
-                            });
-                            
-                            // Send result back to Claude
-                            const toolResponse = await this.sendNonStreamingRequest({
-                                messages: [
-                                    ...this.messageHistory,
-                                    {
-                                        role: 'user',
-                                        content: [{
-                                            type: 'tool_result',
-                                            tool_use_id: `call_${Date.now()}`,
-                                            content: toolResult
-                                        }]
-                                    }
-                                ]
-                            });
-                            
-                            // Handle Claude's response to tool result
-                            await this.handleNonStreamingResponse(toolResponse);
+                            await this.handleToolUse(item, response.data._config);
                         }
                     }
                     this.updateMessageCount();
-                    this.setProcessingState(false);
+                    if (!isStreaming) {
+                        this.setProcessingState(false);
+                    }
                     this.scrollToBottom();
                     return;
                 }
 
                 // Handle single tool use response
                 if (response.data.type === 'tool_use') {
-                    // Generate tool call ID
-                    const toolCallId = `call_${Date.now()}`;
-                    
-                    // First display the tool call
-                    this.handleToolCall({
-                        id: toolCallId,
-                        name: response.data.name,
-                        arguments: response.data.input
-                    });
-                    
-                    // Execute the tool call
-                    const toolResult = await this.executeToolCall(response.data.name, response.data.input);
-                    
-                    // Display tool result
-                    this.handleToolResult({
-                        tool_call_id: toolCallId,
-                        name: response.data.name,
-                        content: toolResult
-                    });
-                    
-                    // Send result back to Claude
-                    const toolResponse = await this.sendNonStreamingRequest({
-                        messages: [
-                            ...this.messageHistory,
-                            {
-                                role: 'user',
-                                content: [{
-                                    type: 'tool_result',
-                                    tool_use_id: `call_${Date.now()}`,
-                                    content: toolResult
-                                }]
-                            }
-                        ]
-                    });
-                    
-                    // Handle Claude's response to tool result
-                    await this.handleNonStreamingResponse(toolResponse);
+                    await this.handleToolUse(response.data, response.data._config);
                     return;
                 }
                 
                 // Handle regular content responses
                 let content = '';
                 
-                // For Nova responses
+                // Extract content based on model type
                 if (response.data.output?.message) {
                     content = response.data.output.message.content?.[0]?.text || '';
-                }
-                // For Llama responses
-                else if (response.data.generation) {
+                } else if (response.data.generation) {
                     content = response.data.generation;
-                }
-                // For Mistral responses
-                else if (response.data.choices?.[0]?.message?.content) {
+                } else if (response.data.choices?.[0]?.message?.content) {
                     content = response.data.choices[0].message.content;
-                }
-                // For Claude single content response
-                else if (response.data.content && !Array.isArray(response.data.content)) {
+                } else if (response.data.content && !Array.isArray(response.data.content)) {
                     content = response.data.content;
                 }
                 
                 if (content) {
-                    this.handleTextContent({
+                    this.handleContent({
                         type: 'text',
                         content: content,
                         role: 'assistant'
-                    });
+                    }, isStreaming);
                     this.updateMessageCount();
                 }
             }
             
-            this.setProcessingState(false);
+            if (!isStreaming) {
+                this.setProcessingState(false);
+            }
             this.scrollToBottom();
         } catch (error) {
             this.handleError(error);
         }
+    }
+
+    // Handle tool use for both streaming and non-streaming
+    async handleToolUse(toolUseData, config = {}) {
+        // Generate tool call ID
+        const toolCallId = `call_${Date.now()}`;
+        
+        // Create tool call message element
+        const callMessage = this.createMessageElement(
+            'tool',
+            this.formatToolMessage({
+                type: 'tool_call',
+                name: toolUseData.name,
+                arguments: toolUseData.input
+            })
+        );
+        this.elements.messagesContainer.append(callMessage);
+        this.scrollToBottom();
+
+        let toolResult;
+        try {
+            // Execute tool call
+            toolResult = await this.executeToolCall(toolUseData.name, toolUseData.input);
+        } catch (error) {
+            // If tool execution fails, create an error result
+            toolResult = {
+                error: true,
+                message: error.message || 'Tool execution failed'
+            };
+        }
+
+        // Create tool result message element
+        const resultMessage = this.createMessageElement(
+            'tool',
+            this.formatToolMessage({
+                type: 'tool_result',
+                name: toolUseData.name,
+                result: toolResult
+            })
+        );
+        this.elements.messagesContainer.append(resultMessage);
+        this.scrollToBottom();
+
+        // Add tool call and result to message history
+        await this.addToolHistoryAndGetResponse(
+            toolUseData.name, 
+            toolUseData.input, 
+            toolResult.error ? { error: toolResult.message } : toolResult, 
+            toolCallId, 
+            config
+        );
+    }
+
+    // Add tool history and get model response
+    async addToolHistoryAndGetResponse(toolName, toolInput, toolResult, toolCallId, config = {}) {
+        const modelId = this.config.default_model;
+        const isMistral = modelId.includes('mistral.mistral');
+        const isClaude = modelId.includes('anthropic.claude');
+        const isNova = modelId.includes('amazon.nova');
+
+        // Add tool result to history based on model type
+        if (isClaude) {
+            this.messageHistory.push({
+                role: 'user',
+                content: [{
+                    type: 'tool_result',
+                    tool_use_id: toolCallId,
+                    content: toolResult
+                }]
+            });
+        } else if (isMistral) {
+            this.messageHistory.push(
+                {
+                    role: 'assistant',
+                    content: 'Using tool: ' + toolName,
+                    tool_calls: [{
+                        id: toolCallId,
+                        function: {
+                            name: toolName,
+                            arguments: typeof toolInput === 'string' ? 
+                                toolInput : JSON.stringify(toolInput)
+                        }
+                    }]
+                },
+                {
+                    role: 'tool',
+                    tool_call_id: toolCallId,
+                    content: JSON.stringify(toolResult)
+                }
+            );
+        } else if (isNova) {
+            this.messageHistory.push(
+                {
+                    role: 'assistant',
+                    content: [{
+                        text: 'Using tool: ' + toolName,
+                        toolUse: {
+                            toolUseId: toolCallId,
+                            name: toolName,
+                            input: typeof toolInput === 'string' ?
+                                JSON.parse(toolInput) : toolInput
+                        }
+                    }]
+                },
+                {
+                    role: 'user',
+                    content: [{
+                        text: 'Tool result:',
+                        toolResult: {
+                            toolUseId: toolCallId,
+                            content: [{
+                                json: {
+                                    content: toolResult
+                                }
+                            }]
+                        }
+                    }]
+                }
+            );
+        }
+
+        // Get model's response to tool result
+        const requestBody = BedrockAPI.formatRequestBody(
+            this.messageHistory,
+            {
+                model: this.config.default_model,
+                temperature: Number(this.config.default_temperature || 0.7),
+                max_tokens: config.max_tokens || 2000,
+                top_p: config.top_p || 0.9,
+                anthropic_version: config.anthropic_version || "bedrock-2023-05-31"
+            },
+            this.selectedTools
+        );
+
+        // Send non-streaming request
+        const toolResponse = await this.sendNonStreamingRequest(requestBody);
+        
+        // Handle response to tool result
+        await this.handleResponse(toolResponse, false);
     }
 
     // Set processing state
@@ -641,70 +769,130 @@ class BedrockChatManager {
         container.scrollTop = container.scrollHeight;
     }
 
-    // Execute tool call with retries and timeout
+    // Execute tool call
     async executeToolCall(toolName, args) {
         console.log('[BedrockChatManager] Executing tool call:', { toolName, args });
         
-        const maxRetries = 3;
-        const timeout = 30000; // 30 seconds
-        const retryDelay = 1000; // 1 second
+        // Get tool configuration
+        const normalizedToolName = toolName.toLowerCase().replace(/[_-]/g, ' ');
+        const toolConfig = window.wpbedrock_tools?.tools?.find(tool => 
+            tool.info.title.toLowerCase() === normalizedToolName
+        );
 
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        if (!toolConfig) {
+            throw new Error(`Tool ${toolName} not found in configuration`);
+        }
+
+        // Get tool endpoint info
+        const pathKey = Object.keys(toolConfig.paths)[0];
+        const methodKey = Object.keys(toolConfig.paths[pathKey])[0];
+        const serverUrl = toolConfig.servers[0].url;
+
+        // Build request URL and parameters
+        const url = (serverUrl + pathKey).replace(/\/+$/, ''); // Remove trailing slashes
+        
+        // Ensure args are properly formatted before sending to proxy
+        const formattedArgs = {};
+        // Convert args from string to object if needed
+        const argsObj = typeof args === 'string' ? JSON.parse(args) : args;
+        
+        // Get required parameters from tool config
+        const parameters = toolConfig.paths[pathKey][methodKey].parameters || [];
+        const requiredParams = parameters
+            .filter(param => param.required)
+            .map(param => param.name);
+
+        // Only include required parameters
+        Object.entries(argsObj).forEach(([key, value]) => {
+            if (requiredParams.includes(key)) {
+                formattedArgs[key] = typeof value === 'string' ? value : JSON.stringify(value);
+            }
+        });
+
+        // Ensure all required parameters are present
+        const missingParams = requiredParams.filter(param => !(param in formattedArgs));
+        if (missingParams.length > 0) {
+            throw new Error(`Missing required parameters: ${missingParams.join(', ')}`);
+        }
+
+        // Get the HTTP method from tool configuration
+        const pathConfig = toolConfig.paths[pathKey];
+        const supportedMethods = Object.keys(pathConfig);
+        
+        // For GET requests, prefer GET if available
+        const requestMethod = pathConfig['get'] ? 'GET' : supportedMethods[0].toUpperCase();
+
+        // Make request through WordPress proxy
+        const response = await this.$.ajax({
+            url: this.config.ajaxurl,
+            method: 'POST',
+            data: {
+                action: 'wpbedrock_tool_proxy',
+                nonce: this.config.nonce,
+                url: url,
+                method: requestMethod,
+                params: formattedArgs
+            },
+            timeout: 30000 // 30 second timeout
+        });
+
+        if (!response || !response.success) {
+            throw new Error(response?.data || 'Tool execution failed');
+        }
+
+        // Handle empty results
+        if (response.data === undefined || response.data === null) {
+            return {
+                message: 'No results found. Please try a different search query.',
+                status: 'empty'
+            };
+        }
+
+        // Parse response data if it's a string
+        if (typeof response.data === 'string') {
             try {
-                // Get tool configuration
-                const normalizedToolName = toolName.toLowerCase().replace(/[_-]/g, ' ');
-                const toolConfig = window.wpbedrock_tools?.tools?.find(tool => 
-                    tool.info.title.toLowerCase() === normalizedToolName
-                );
-
-                if (!toolConfig) {
-                    throw new Error(`Tool ${toolName} not found in configuration`);
-                }
-
-                // Get tool endpoint info
-                const pathKey = Object.keys(toolConfig.paths)[0];
-                const methodKey = Object.keys(toolConfig.paths[pathKey])[0];
-                const serverUrl = toolConfig.servers[0].url;
-
-                // Build request URL and parameters
-                const url = (serverUrl + pathKey).replace(/\/+$/, ''); // Remove trailing slashes
-                
-                // Ensure args are properly formatted before sending to proxy
-                const formattedArgs = {};
-                // Convert args from string to object if needed
-                const argsObj = typeof args === 'string' ? JSON.parse(args) : args;
-                
-                // Format each parameter according to the tool's schema
-                Object.entries(argsObj).forEach(([key, value]) => {
-                    formattedArgs[key] = typeof value === 'string' ? value : JSON.stringify(value);
-                });
-
-                // Make request through WordPress proxy
-                const response = await this.$.ajax({
-                    url: this.config.ajaxurl,
-                    method: 'POST',
-                    data: {
-                        action: 'wpbedrock_tool_proxy',
-                        nonce: this.config.nonce,
-                        url: url,
-                        method: methodKey,
-                        params: formattedArgs
-                    }
-                });
-
-                if (!response || !response.success) {
-                    throw new Error(response?.data || 'Tool execution failed');
-                }
-
+                return JSON.parse(response.data);
+            } catch (e) {
                 return response.data;
-            } catch (error) {
-                if (attempt === maxRetries) {
-                    throw error;
-                }
-                console.warn(`[BedrockChatManager] Tool execution attempt ${attempt} failed:`, error);
-                await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
             }
         }
+
+        return response.data;
+    }
+
+    // Extract tool info from formatted tool call
+    extractToolInfo(formattedToolCall) {
+        if (!formattedToolCall) return null;
+
+        // Handle Claude format
+        if (formattedToolCall.content?.[0]?.type === 'tool_use') {
+            return {
+                id: formattedToolCall.content[0].id,
+                name: formattedToolCall.content[0].name,
+                input: formattedToolCall.content[0].input
+            };
+        }
+
+        // Handle Mistral format
+        if (formattedToolCall.tool_calls?.[0]) {
+            return {
+                id: formattedToolCall.tool_calls[0].id,
+                name: formattedToolCall.tool_calls[0].function.name,
+                input: JSON.parse(formattedToolCall.tool_calls[0].function.arguments)
+            };
+        }
+
+        // Handle Nova format
+        if (formattedToolCall.content?.[0]?.toolUse) {
+            const toolUse = formattedToolCall.content[0].toolUse;
+            return {
+                id: toolUse.toolUseId,
+                name: toolUse.name,
+                input: toolUse.input
+            };
+        }
+
+        return null;
     }
 
     // Toggle tool selection
