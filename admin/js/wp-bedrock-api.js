@@ -120,7 +120,7 @@ class BedrockAPI {
     static formatToolResult(toolResult) {
         // Handle Claude's tool_use format
         const name = toolResult.name || toolResult.content?.name || toolResult.tool_name || '';
-        const result = toolResult.result || toolResult.content?.result || toolResult.tool_result || {};
+        const result = toolResult.output || toolResult.result || toolResult.content?.result || toolResult.tool_result || {};
         
         return `<div class="tool-message tool-result">
             <div class="tool-header">
@@ -267,13 +267,15 @@ class BedrockAPI {
 
     // Format tool result based on model type
     static formatToolResult(toolResult, modelId) {
+        const output = toolResult.output || toolResult.content;
+        
         if (modelId.includes('anthropic.claude')) {
             return {
                 role: 'user',
                 content: [{
                     type: 'tool_result',
                     tool_use_id: toolResult.tool_call_id,
-                    content: toolResult.content
+                    content: { output }
                 }]
             };
         }
@@ -282,7 +284,7 @@ class BedrockAPI {
             return {
                 role: 'tool',
                 tool_call_id: toolResult.tool_call_id,
-                content: toolResult.content
+                content: JSON.stringify({ output })
             };
         }
 
@@ -294,7 +296,7 @@ class BedrockAPI {
                         toolUseId: toolResult.tool_call_id,
                         content: [{
                             json: {
-                                content: toolResult.content
+                                content: { output }
                             }
                         }]
                     }
@@ -395,7 +397,8 @@ class BedrockAPI {
                             return `Using tool: ${item.name}\nInput: ${JSON.stringify(item.input)}`;
                         }
                         if (item.type === "tool_result") {
-                            return `Tool result: ${JSON.stringify(item.content)}`;
+                            const output = item.content?.output || item.content;
+                            return `Tool result: ${JSON.stringify({ output })}`;
                         }
                         return "";
                     })
@@ -484,13 +487,37 @@ class BedrockAPI {
             anthropic_version: modelConfig.anthropic_version || "bedrock-2023-05-31"
         };
 
-        // Add tools if present
-        if (tools.length > 0) {
-            requestBody.tools = tools.map(tool => ({
-                name: (tool?.function?.name || "").toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_-]/g, ''),
-                description: tool?.function?.description || "",
-                input_schema: tool?.function?.parameters || {}
-            }));
+        // Add tools if they exist and are properly formatted
+        if (tools && tools.length > 0) {
+            // Filter and format tools based on model type
+            if (modelConfig.model.includes('anthropic.claude')) {
+                // Claude format: only name and input_schema
+                const validTools = tools.filter(tool => 
+                    tool && tool.name && tool.input_schema && typeof tool.input_schema === 'object'
+                );
+                if (validTools.length > 0) {
+                    requestBody.tools = validTools;
+                }
+            } else if (modelConfig.model.includes('mistral.mistral')) {
+                // Mistral format: type, function with name, description, parameters
+                const validTools = tools.filter(tool => 
+                    tool && tool.type === 'function' && tool.function?.name && tool.function?.parameters
+                );
+                if (validTools.length > 0) {
+                    requestBody.tools = validTools;
+                }
+            } else if (modelConfig.model.includes('amazon.nova')) {
+                // Nova format: toolSpec with name, description, inputSchema
+                const validTools = tools.filter(tool => 
+                    tool && tool.toolSpec?.name && tool.toolSpec?.inputSchema
+                );
+                if (validTools.length > 0) {
+                    requestBody.toolConfig = {
+                        tools: validTools,
+                        toolChoice: { auto: {} }
+                    };
+                }
+            }
         }
 
         // Log request for debugging

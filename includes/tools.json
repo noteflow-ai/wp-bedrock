@@ -143,43 +143,185 @@
         "components": {
           "schemas": {}
         }
-      },
-      {
+      },{
         "openapi": "3.1.0",
         "info": {
-          "title": "WolframAlpha",
-          "description": "A wrapper around Wolfram Alpha. Useful for when you need to answer questions about Math, Science, Technology, Culture, Society and Everyday Life. Input should be a search query. If the result contains an image link, use the markdown syntax to return the image.",
-          "version": "v1.0.0"
+          "title": "CodeInterpreter",
+          "description": "Run a given Python program and return the output.",
+          "version": "1.0.0"
         },
         "servers": [
           {
-            "url": "https://www.wolframalpha.com"
+            "url": "https://code.leez.tech"
           }
         ],
         "paths": {
-          "/api/v1/llm-api": {
-            "get": {
-              "operationId": "Calculate",
-              "description": "A wrapper around Wolfram Alpha. Useful for when you need to answer questions about Math, Science, Technology, Culture, Society and Everyday Life. Input should be a search query. If the result contains an image link, use the markdown syntax to return the image.",
-              "deprecated": false,
-              "parameters": [
-                {
-                  "name": "input",
-                  "in": "query",
-                  "required": true,
-                  "description": "questions about Math, Science, Technology, Culture, Society and Everyday Life",
-                  "schema": {
-                    "type": "string"
+          "/runcode": {
+            "post": {
+              "operationId": "CodeInterpreter",
+              "x-openai-isConsequential": false,
+              "summary": "Run a given Python program and return the output.",
+              "requestBody": {
+                "required": true,
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object",
+                      "required": ["code", "languageType", "variables"],
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "description": "The Python code to execute"
+                        },
+                        "languageType": {
+                          "type": "string",
+                          "description": "value is `python`"
+                        },
+                        "variables": {
+                          "type": "object",
+                          "description": "value is empty dict: `{}`"
+                        }
+                      }
+                    }
                   }
                 }
-              ]
+              }
+            }
+          }
+        }
+      },{
+        "openapi": "3.1.0",
+        "info": {
+          "description": "A GPT that allows the user to read data from a link.",
+          "title": "Chat PDF GPT",
+          "version": "v1"
+        },
+        "servers": [
+          {
+            "url": "https://gpt.chatpdf.aidocmaker.com"
+          }
+        ],
+        "paths": {
+          "/read_url": {
+            "post": {
+              "description": "Allows for reading the contents of an URL link, including PDF/DOC/DOCX/PPT/CSV/XLS/XLSX/HTML content, Google Drive, Dropbox, OneDrive, aidocmaker.com docs. Always wrap image URLs from the response field `z1_image_urls` in Markdown, where each image has a ## DESCRIPTION.",
+              "operationId": "ChatPDFReadRrl",
+              "requestBody": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/ReadDocV2Request"
+                    }
+                  }
+                },
+                "required": true
+              },
+              "responses": {
+                "200": {
+                  "content": {
+                    "application/json": {
+                      "schema": {}
+                    }
+                  },
+                  "description": "Successful Response"
+                },
+                "422": {
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "$ref": "#/components/schemas/HTTPValidationError"
+                      }
+                    }
+                  },
+                  "description": "Validation Error"
+                }
+              },
+              "summary": "Read the contents of an URL link",
+              "x-openai-isConsequential": false
             }
           }
         },
         "components": {
-          "schemas": {}
+          "schemas": {
+            "HTTPValidationError": {
+              "properties": {
+                "detail": {
+                  "items": {
+                    "$ref": "#/components/schemas/ValidationError"
+                  },
+                  "title": "Detail",
+                  "type": "array"
+                }
+              },
+              "title": "HTTPValidationError",
+              "type": "object"
+            },
+            "ReadDocV2Request": {
+              "properties": {
+                "f1_http_url": {
+                  "description": "User will pass a HTTPS or HTTP url to a file so that the file contents can be read.",
+                  "title": "F1 Http Url",
+                  "type": "string"
+                },
+                "f2_query": {
+                  "default": "",
+                  "description": "User will pass a query string to fetch relevant sections from the contents. It will be used for sentence-level similarity search on the document based on embeddings.",
+                  "title": "F2 Query",
+                  "type": "string"
+                },
+                "f3_selected_pages": {
+                  "default": [],
+                  "description": "Filter document on these page numbers. Use empty list to get all pages.",
+                  "items": {
+                    "type": "integer"
+                  },
+                  "title": "F3 Selected Pages",
+                  "type": "array"
+                }
+              },
+              "required": [
+                "f1_http_url"
+              ],
+              "title": "ReadDocV2Request",
+              "type": "object"
+            },
+            "ValidationError": {
+              "properties": {
+                "loc": {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "integer"
+                      }
+                    ]
+                  },
+                  "title": "Location",
+                  "type": "array"
+                },
+                "msg": {
+                  "title": "Message",
+                  "type": "string"
+                },
+                "type": {
+                  "title": "Error Type",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "loc",
+                "msg",
+                "type"
+              ],
+              "title": "ValidationError",
+              "type": "object"
+            }
+          }
         }
       }
+
     ]
   }
   

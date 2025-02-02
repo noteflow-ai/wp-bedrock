@@ -364,46 +364,82 @@ class WP_Bedrock_Admin {
                 'redirection' => 5,
                 'httpversion' => '1.1',
                 'headers' => [
-                    'User-Agent' => 'WordPress/WP-Bedrock',
-                    'Accept' => $content_type
+                    'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language' => 'en-US,en;q=0.5',
+                    'DNT' => '1',
+                    'Connection' => 'keep-alive',
+                    'Upgrade-Insecure-Requests' => '1'
                 ]
             ];
 
-            // Handle parameters according to operation specification
-            if ($method === 'POST') {
+            // Handle parameters according to OpenAPI specification
+            $query_params = [];
+            $body_params = [];
+
+            // First check for requestBody definition
+            if (isset($operation['requestBody'])) {
+                $content_type = array_key_first($operation['requestBody']['content']);
+                $schema = $operation['requestBody']['content'][$content_type]['schema'];
+                
+                // Set content type header
                 $args['headers']['Content-Type'] = $content_type;
+                
+                // For JSON request bodies, send parameters as JSON
                 if ($content_type === 'application/json') {
                     $args['body'] = json_encode($params);
-                } else {
-                    $args['body'] = http_build_query($params);
                 }
-            } else {
-                // For GET requests, encode parameters according to parameter specifications
-                $query_params = [];
-                if (isset($operation['parameters']) && is_array($operation['parameters'])) {
-                    foreach ($operation['parameters'] as $param) {
-                        if (isset($params[$param['name']])) {
-                            $value = $params[$param['name']];
-                            if (isset($param['in']) && $param['in'] === 'query') {
-                                if (isset($param['schema']['type']) && 
-                                    ($param['schema']['type'] === 'object' || $param['schema']['type'] === 'array')) {
-                                    $query_params[$param['name']] = json_encode($value);
-                                } else {
-                                    $query_params[$param['name']] = (string)$value;
-                                }
-                            }
+            } 
+            // If no requestBody, handle parameters
+            else if (isset($operation['parameters']) && is_array($operation['parameters'])) {
+                foreach ($operation['parameters'] as $param) {
+                    if (isset($params[$param['name']])) {
+                        $value = $params[$param['name']];
+                        $param_in = $param['in'] ?? 'query';
+                        
+                        // Convert value based on schema type
+                        if (isset($param['schema']['type']) && 
+                            ($param['schema']['type'] === 'object' || $param['schema']['type'] === 'array')) {
+                            $value = json_encode($value);
+                        } else {
+                            $value = (string)$value;
+                        }
+
+                        // Add parameter to appropriate collection based on 'in' property
+                        if ($param_in === 'query') {
+                            $query_params[$param['name']] = $value;
+                        } else if ($param_in === 'body') {
+                            $body_params[$param['name']] = $value;
                         }
                     }
-                } else {
-                    // If no parameters defined in OpenAPI spec, pass all params as query params
-                    foreach ($params as $name => $value) {
-                        $query_params[$name] = is_array($value) || is_object($value) ? 
-                            json_encode($value) : (string)$value;
-                    }
                 }
-                $url = add_query_arg($query_params, $url);
+
+                // Always add query parameters to URL
+                if (!empty($query_params)) {
+                    $url = add_query_arg($query_params, $url);
+                }
+
+                // For POST requests with form parameters
+                if ($method === 'POST' && empty($args['body'])) {
+                    $args['headers']['Content-Type'] = 'application/x-www-form-urlencoded';
+                    // If we have body parameters, use those, otherwise use query parameters in the body
+                    $body_data = !empty($body_params) ? $body_params : $query_params;
+                    $args['body'] = http_build_query($body_data);
+                }
+            } else {
+                // If no parameters or requestBody defined in OpenAPI spec, use all params as query params
+                foreach ($params as $name => $value) {
+                    $query_params[$name] = is_array($value) || is_object($value) ? 
+                        json_encode($value) : (string)$value;
+                }
+                
+                // Add query parameters to URL
+                if (!empty($query_params)) {
+                    $url = add_query_arg($query_params, $url);
+                }
             }
 
+            // Make the request
             $response = wp_remote_request($url, $args);
 
             if (is_wp_error($response)) {
@@ -413,10 +449,13 @@ class WP_Bedrock_Admin {
             $body = wp_remote_retrieve_body($response);
             $status = wp_remote_retrieve_response_code($response);
 
-            // Handle response based on status code
+            // Handle API responses
             switch ($status) {
                 case 200:
-                    if ($content_type === 'application/json') {
+                    if (strpos($url, 'code.leez.tech') !== false) {
+                        // For code interpreter, return the response directly
+                        wp_send_json_success(json_decode($body, true));
+                    } else if ($content_type === 'application/json' || strpos($url, 'lite.duckduckgo.com') !== false) {
                         $decoded = json_decode($body);
                         if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
                             wp_send_json_success($body);

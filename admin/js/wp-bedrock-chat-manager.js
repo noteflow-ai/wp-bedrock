@@ -12,6 +12,11 @@ class BedrockChatManager {
         // Store UI elements
         this.elements = elements;
 
+        // Remove any existing loading messages
+        if (elements.messagesContainer) {
+            elements.messagesContainer.find('.loading-message').remove();
+        }
+        
         // Initialize state
         this.messageHistory = [];
         this.selectedTools = [];
@@ -19,7 +24,9 @@ class BedrockChatManager {
         this.currentEventSource = null;
         
         // Initialize tools configuration
-        window.wpbedrock_tools = config.tools || {};
+        window.wpbedrock_tools = {
+            tools: config.tools?.tools || []
+        };
 
         // Initialize handlers
         this.api = new BedrockAPI();
@@ -64,6 +71,9 @@ class BedrockChatManager {
 
     // Initialize chat
     initialize() {
+        // Remove any existing loading messages
+        this.elements.messagesContainer.find('.loading-message').remove();
+        
         // Reset message history
         this.messageHistory = [];
         
@@ -94,6 +104,11 @@ class BedrockChatManager {
                     .html(isError ? this.responseHandler.formatErrorMessage(content) : this.formatMessage(content))
             );
 
+        // Add loading class if this is a loading message
+        if (content === 'Searching...' || content === 'Thinking...') {
+            messageElement.addClass('loading-message');
+        }
+
         // Add image preview styles
         messageElement.find('img.generated-image').css({
             'max-width': '200px',
@@ -121,6 +136,9 @@ class BedrockChatManager {
 
     // Format message content using BedrockAPI
     formatMessage(content) {
+        // Remove any existing loading messages before formatting message
+        this.elements.messagesContainer.find('.loading-message').remove();
+        
         return BedrockAPI.formatMessageContent(content, this.md);
     }
 
@@ -148,6 +166,9 @@ class BedrockChatManager {
     // Handle content from both streaming and non-streaming responses
     handleContent(data, isStreaming = false) {
         console.log(`[BedrockChatManager] ${isStreaming ? 'Stream' : 'Non-stream'} content:`, data);
+        
+        // Remove any existing loading messages before handling new content
+        this.elements.messagesContainer.find('.loading-message').remove();
         
         // Ensure data is properly structured
         if (!data || !data.type) {
@@ -194,6 +215,9 @@ class BedrockChatManager {
         
         console.log('[BedrockChatManager] Handling text content:', { content, role, isStreaming });
 
+        // Remove any existing loading messages before handling new content
+        this.elements.messagesContainer.find('.loading-message').remove();
+
         const lastMessage = this.elements.messagesContainer.find('.chat-message:last');
         if (lastMessage.hasClass('ai') && role === 'assistant' && isStreaming) {
             // Update existing assistant message for streaming
@@ -232,21 +256,9 @@ class BedrockChatManager {
         const toolCallId = `call_${Date.now()}`;
         
         try {
-            // Create tool call message element
-            const message = this.createMessageElement(
-                'tool',
-                this.formatToolMessage({
-                    type: 'tool_call',
-                    name: toolCall.name,
-                    arguments: toolCall.arguments
-                })
-            );
-            this.elements.messagesContainer.append(message);
-            this.scrollToBottom();
-
             let result;
             try {
-                // Execute tool call
+                // Execute tool call silently
                 result = await this.executeToolCall(toolCall.name, toolCall.arguments);
             } catch (error) {
                 // If tool execution fails, create an error result
@@ -256,29 +268,20 @@ class BedrockChatManager {
                 };
             }
             
-            // Create tool result message element
-            const resultMessage = this.createMessageElement(
-                'tool',
-                this.formatToolMessage({
-                    type: 'tool_result',
-                    name: toolCall.name,
-                    result: result
-                })
-            );
-            this.elements.messagesContainer.append(resultMessage);
-            this.scrollToBottom();
-
-            // Add tool result to history
-            this.messageHistory.push({
+            // Format tool result for Claude
+            const formattedResult = {
                 role: 'user',
                 content: [{
                     type: 'tool_result',
                     tool_use_id: toolCallId,
                     content: result.error ? 
                         { error: result.message } : 
-                        result
+                        result // Pass the entire result object
                 }]
-            });
+            };
+
+            // Add tool result to history
+            this.messageHistory.push(formattedResult);
 
             // Get model's response to tool result
             const requestBody = BedrockAPI.formatRequestBody(
@@ -293,9 +296,27 @@ class BedrockChatManager {
                 this.selectedTools
             );
             
-            // Send non-streaming request
-            const response = await this.sendNonStreamingRequest(requestBody);
-            await this.handleResponse(response, false);
+            // Add a loading message while waiting for response
+            const loadingMessage = this.createMessageElement(
+                'assistant',
+                'Thinking...'
+            );
+            this.elements.messagesContainer.append(loadingMessage);
+            this.scrollToBottom();
+            
+            try {
+                // Send non-streaming request
+                const response = await this.sendNonStreamingRequest(requestBody);
+                
+                // Remove loading message before handling response
+                loadingMessage.remove();
+                
+                await this.handleResponse(response, false);
+            } catch (error) {
+                // Remove loading message on error
+                loadingMessage.remove();
+                throw error;
+            }
 
             this.updateMessageCount();
             this.scrollToBottom();
@@ -310,30 +331,20 @@ class BedrockChatManager {
         console.log('[BedrockChatManager] Tool result:', toolResult);
         
         try {
-            // Create tool result message element
-            const message = this.createMessageElement(
-                'tool',
-                this.formatToolMessage({
-                    type: 'tool_result',
-                    name: toolResult.name,
-                    result: toolResult.content
-                })
-            );
-            this.elements.messagesContainer.append(message);
-            this.scrollToBottom();
-
             // Only update message history for streaming tool results
             // Non-streaming tool results are handled by handleToolCall
             if (toolResult.isStreaming) {
                 const toolCallId = `call_${Date.now()}`;
                 
-                // Add tool result to history
+                // Add tool result to history silently
                 this.messageHistory.push({
                     role: 'user',
                     content: [{
                         type: 'tool_result',
                         tool_use_id: toolCallId,
-                        content: toolResult.content
+                    content: toolResult.error ? 
+                        { error: toolResult.message } : 
+                        { output: toolResult.output || toolResult.content || toolResult }
                     }]
                 });
 
@@ -350,9 +361,27 @@ class BedrockChatManager {
                     this.selectedTools
                 );
                 
-                // Send non-streaming request
-                const response = await this.sendNonStreamingRequest(requestBody);
-                await this.handleResponse(response, false);
+                // Add a loading message while waiting for response
+                const loadingMessage = this.createMessageElement(
+                    'assistant',
+                    'Thinking...'
+                );
+                this.elements.messagesContainer.append(loadingMessage);
+                this.scrollToBottom();
+                
+                try {
+                    // Send non-streaming request
+                    const response = await this.sendNonStreamingRequest(requestBody);
+                    
+                    // Remove loading message before handling response
+                    loadingMessage.remove();
+                    
+                    await this.handleResponse(response, false);
+                } catch (error) {
+                    // Remove loading message on error
+                    loadingMessage.remove();
+                    throw error;
+                }
 
                 this.updateMessageCount();
                 this.scrollToBottom();
@@ -365,6 +394,9 @@ class BedrockChatManager {
 
     // Format tool message for display
     formatToolMessage(toolData) {
+        // Remove any existing loading messages before formatting tool message
+        this.elements.messagesContainer.find('.loading-message').remove();
+        
         const type = toolData.type === 'tool_call' ? 'Tool Call' : 'Tool Result';
         const content = toolData.type === 'tool_call' ? 
             `Arguments: ${JSON.stringify(toolData.arguments, null, 2)}` :
@@ -381,6 +413,9 @@ class BedrockChatManager {
 
     // Get current turn index
     getCurrentTurnIndex() {
+        // Remove any existing loading messages before getting turn index
+        this.elements.messagesContainer.find('.loading-message').remove();
+        
         return Math.floor(this.messageHistory.filter(msg => 
             msg.role === 'user' || msg.role === 'assistant'
         ).length / 2);
@@ -388,16 +423,24 @@ class BedrockChatManager {
 
     // Handle retry attempts
     handleRetry(retryCount, error) {
+        // Remove any existing loading or retry messages
+        this.elements.messagesContainer.find('.loading-message').remove();
+        
         const retryMessage = this.createMessageElement(
             'system',
             `Retrying connection (attempt ${retryCount}/3)...`
         );
+        // Add loading class to retry message for cleanup
+        retryMessage.addClass('loading-message');
         this.elements.messagesContainer.append(retryMessage);
         this.scrollToBottom();
     }
 
     // Handle stream complete
     handleStreamComplete() {
+        // Remove any existing loading messages
+        this.elements.messagesContainer.find('.loading-message').remove();
+        
         this.setProcessingState(false);
         this.scrollToBottom();
     }
@@ -405,6 +448,10 @@ class BedrockChatManager {
     // Handle error
     handleError(error) {
         console.error('[BedrockChatManager] Error:', error);
+        
+        // Remove any existing loading messages
+        this.elements.messagesContainer.find('.loading-message').remove();
+        
         const errorMessage = this.createMessageElement('assistant', error, true);
         this.elements.messagesContainer.append(errorMessage);
         this.setProcessingState(false);
@@ -444,6 +491,9 @@ class BedrockChatManager {
             // Clear input and reset state
             this.clearInput(messageText, imagePreview);
 
+            // Remove any existing loading messages before starting new request
+            this.elements.messagesContainer.find('.loading-message').remove();
+            
             // Set processing state
             this.setProcessingState(true);
 
@@ -478,6 +528,9 @@ class BedrockChatManager {
 
     // Add user message to UI and history
     addUserMessage(messageContent) {
+        // Remove any existing loading messages before adding new message
+        this.elements.messagesContainer.find('.loading-message').remove();
+        
         // Create message element with proper formatting
         const userMessage = this.createMessageElement('user', messageContent);
         this.elements.messagesContainer.append(userMessage);
@@ -537,6 +590,9 @@ class BedrockChatManager {
     // Handle response from both streaming and non-streaming
     async handleResponse(response, isStreaming = false) {
         try {
+            // Remove any existing loading messages before processing response
+            this.elements.messagesContainer.find('.loading-message').remove();
+            
             if (!response || !response.success) {
                 throw new Error(response?.data || 'Invalid response from server');
             }
@@ -608,21 +664,20 @@ class BedrockChatManager {
         // Generate tool call ID
         const toolCallId = `call_${Date.now()}`;
         
-        // Create tool call message element
-        const callMessage = this.createMessageElement(
-            'tool',
-            this.formatToolMessage({
-                type: 'tool_call',
-                name: toolUseData.name,
-                arguments: toolUseData.input
-            })
+        // Remove any existing loading messages
+        this.elements.messagesContainer.find('.loading-message').remove();
+        
+        // Add a loading message while processing
+        const loadingMessage = this.createMessageElement(
+            'assistant',
+            'Searching...'
         );
-        this.elements.messagesContainer.append(callMessage);
+        this.elements.messagesContainer.append(loadingMessage);
         this.scrollToBottom();
 
         let toolResult;
         try {
-            // Execute tool call
+            // Execute tool call silently
             toolResult = await this.executeToolCall(toolUseData.name, toolUseData.input);
         } catch (error) {
             // If tool execution fails, create an error result
@@ -632,17 +687,8 @@ class BedrockChatManager {
             };
         }
 
-        // Create tool result message element
-        const resultMessage = this.createMessageElement(
-            'tool',
-            this.formatToolMessage({
-                type: 'tool_result',
-                name: toolUseData.name,
-                result: toolResult
-            })
-        );
-        this.elements.messagesContainer.append(resultMessage);
-        this.scrollToBottom();
+        // Remove loading message
+        loadingMessage.remove();
 
         // Add tool call and result to message history
         await this.addToolHistoryAndGetResponse(
@@ -735,11 +781,30 @@ class BedrockChatManager {
             this.selectedTools
         );
 
-        // Send non-streaming request
-        const toolResponse = await this.sendNonStreamingRequest(requestBody);
+        // Remove any existing loading messages
+        this.elements.messagesContainer.find('.loading-message').remove();
         
-        // Handle response to tool result
-        await this.handleResponse(toolResponse, false);
+        // Add a loading message while waiting for response
+        const loadingMessage = this.createMessageElement(
+            'assistant',
+            'Thinking...'
+        );
+        this.elements.messagesContainer.append(loadingMessage);
+        this.scrollToBottom();
+
+        try {
+            // Send non-streaming request
+            const toolResponse = await this.sendNonStreamingRequest(requestBody);
+            
+            // Remove loading message before handling response
+            loadingMessage.remove();
+            
+            await this.handleResponse(toolResponse, false);
+        } catch (error) {
+            // Remove loading message on error
+            loadingMessage.remove();
+            throw error;
+        }
     }
 
     // Set processing state
@@ -752,6 +817,9 @@ class BedrockChatManager {
 
     // Clear chat
     clearChat() {
+        // Remove any existing loading messages
+        this.elements.messagesContainer.find('.loading-message').remove();
+        
         this.messageHistory = [];
         this.elements.messagesContainer.empty();
         this.initialize();
@@ -773,54 +841,116 @@ class BedrockChatManager {
     async executeToolCall(toolName, args) {
         console.log('[BedrockChatManager] Executing tool call:', { toolName, args });
         
-        // Get tool configuration
-        const normalizedToolName = toolName.toLowerCase().replace(/[_-]/g, ' ');
-        const toolConfig = window.wpbedrock_tools?.tools?.find(tool => 
-            tool.info.title.toLowerCase() === normalizedToolName
-        );
+        // Remove any existing loading messages before executing tool
+        this.elements.messagesContainer.find('.loading-message').remove();
+        
+                // Get tool configuration
+                const normalizedToolName = toolName.toLowerCase().replace(/[^a-z0-9]/g, '_');
+                const toolConfig = window.wpbedrock_tools?.tools?.find(tool => 
+                    tool.info.title.toLowerCase().replace(/[^a-z0-9]/g, '_') === normalizedToolName
+                );
 
         if (!toolConfig) {
             throw new Error(`Tool ${toolName} not found in configuration`);
         }
 
+        if (!toolConfig.paths || Object.keys(toolConfig.paths).length === 0) {
+            throw new Error(`Tool ${toolName} has no valid paths configured`);
+        }
+
+        if (!toolConfig.servers || !toolConfig.servers[0]?.url) {
+            throw new Error(`Tool ${toolName} has no valid server URL configured`);
+        }
+
         // Get tool endpoint info
-        const pathKey = Object.keys(toolConfig.paths)[0];
-        const methodKey = Object.keys(toolConfig.paths[pathKey])[0];
-        const serverUrl = toolConfig.servers[0].url;
+        const pathKeys = Object.keys(toolConfig.paths);
+        if (pathKeys.length === 0) {
+            throw new Error(`Tool ${toolName} has no paths configured`);
+        }
+        const pathKey = pathKeys[0];
+        
+        const pathConfig = toolConfig.paths[pathKey];
+        if (!pathConfig || typeof pathConfig !== 'object') {
+            throw new Error(`Invalid path configuration for tool ${toolName}`);
+        }
+        
+        const methodKeys = Object.keys(pathConfig);
+        if (methodKeys.length === 0) {
+            throw new Error(`No HTTP methods configured for path ${pathKey} in tool ${toolName}`);
+        }
+        const methodKey = methodKeys[0];
+        
+        const serverUrl = toolConfig.servers[0]?.url;
+        if (!serverUrl) {
+            throw new Error(`No server URL configured for tool ${toolName}`);
+        }
 
         // Build request URL and parameters
         const url = (serverUrl + pathKey).replace(/\/+$/, ''); // Remove trailing slashes
         
         // Ensure args are properly formatted before sending to proxy
-        const formattedArgs = {};
+        let formattedArgs = {};
         // Convert args from string to object if needed
         const argsObj = typeof args === 'string' ? JSON.parse(args) : args;
         
-        // Get required parameters from tool config
-        const parameters = toolConfig.paths[pathKey][methodKey].parameters || [];
-        const requiredParams = parameters
-            .filter(param => param.required)
-            .map(param => param.name);
-
-        // Only include required parameters
-        Object.entries(argsObj).forEach(([key, value]) => {
-            if (requiredParams.includes(key)) {
-                formattedArgs[key] = typeof value === 'string' ? value : JSON.stringify(value);
+        // Get operation details
+        const operation = toolConfig.paths[pathKey][methodKey];
+        
+        // Check if tool uses requestBody
+        if (operation.requestBody) {
+            // For tools with requestBody, ensure arguments match schema
+            const schema = operation.requestBody.content['application/json'].schema;
+            if (schema.required) {
+                // Ensure all required fields are present
+                schema.required.forEach(field => {
+                    if (!(field in argsObj)) {
+                        throw new Error(`Missing required field: ${field}`);
+                    }
+                });
             }
-        });
+            // For CodeInterpreter, ensure required fields
+            if (normalizedToolName === 'code_interpreter') {
+                if (!argsObj.variables) {
+                    argsObj.variables = {};
+                }
+                if (!argsObj.languageType) {
+                    argsObj.languageType = 'python';
+                }
+            }
+            formattedArgs = argsObj;
+        } else {
+            // For tools with parameters, format them according to spec
+            const parameters = operation.parameters || [];
+            const requiredParams = parameters
+                .filter(param => param.required)
+                .map(param => param.name);
 
-        // Ensure all required parameters are present
-        const missingParams = requiredParams.filter(param => !(param in formattedArgs));
-        if (missingParams.length > 0) {
-            throw new Error(`Missing required parameters: ${missingParams.join(', ')}`);
+            // Include required parameters and additional params for specific tools
+            Object.entries(argsObj).forEach(([key, value]) => {
+                if (requiredParams.includes(key)) {
+                    formattedArgs[key] = typeof value === 'string' ? value : JSON.stringify(value);
+                }
+            });
+
+            // Add additional parameters for DuckDuckGo Lite
+            if (normalizedToolName === 'duckduckgo lite') {
+                // Only add required parameters as defined in tools.json
+                formattedArgs.q = argsObj.q;
+                formattedArgs.o = 'json';
+                formattedArgs.api = 'd.js';
+                formattedArgs.s = '0';
+            }
+
+            // Ensure all required parameters are present
+            const missingParams = requiredParams.filter(param => !(param in formattedArgs));
+            if (missingParams.length > 0) {
+                throw new Error(`Missing required parameters: ${missingParams.join(', ')}`);
+            }
         }
 
         // Get the HTTP method from tool configuration
-        const pathConfig = toolConfig.paths[pathKey];
-        const supportedMethods = Object.keys(pathConfig);
-        
         // For GET requests, prefer GET if available
-        const requestMethod = pathConfig['get'] ? 'GET' : supportedMethods[0].toUpperCase();
+        const requestMethod = pathConfig['get'] ? 'GET' : methodKey.toUpperCase();
 
         // Make request through WordPress proxy
         const response = await this.$.ajax({
@@ -831,7 +961,10 @@ class BedrockChatManager {
                 nonce: this.config.nonce,
                 url: url,
                 method: requestMethod,
-                params: formattedArgs
+                // For POST requests where parameters are defined as query params, pass them as query string
+                params: formattedArgs,
+                // Add flag to indicate parameters should be in query string for this POST request
+                queryParams: methodKey === 'post' && operation.parameters?.length > 0 && operation.parameters.every(p => p.in === 'query')
             },
             timeout: 30000 // 30 second timeout
         });
@@ -848,20 +981,47 @@ class BedrockChatManager {
             };
         }
 
-        // Parse response data if it's a string
-        if (typeof response.data === 'string') {
+        // Parse response data
+        let result = response.data;
+        
+        // For DuckDuckGo Lite, extract search results from HTML response
+        if (normalizedToolName === 'duckduckgo lite' && typeof result === 'string') {
             try {
-                return JSON.parse(response.data);
+                // Try parsing as JSON first
+                result = JSON.parse(result);
             } catch (e) {
-                return response.data;
+                // If not JSON, it's likely HTML - create a temporary div to parse it
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = result;
+                
+                // Extract search results
+                const searchResults = Array.from(tempDiv.querySelectorAll('.result')).map(result => ({
+                    title: result.querySelector('.result__title')?.textContent?.trim() || '',
+                    snippet: result.querySelector('.result__snippet')?.textContent?.trim() || '',
+                    url: result.querySelector('.result__url')?.textContent?.trim() || ''
+                }));
+                
+                result = {
+                    results: searchResults,
+                    type: 'search_results'
+                };
+            }
+        } else if (typeof result === 'string') {
+            try {
+                result = JSON.parse(result);
+            } catch (e) {
+                result = { content: result };
             }
         }
 
-        return response.data;
+        return result;
     }
 
     // Extract tool info from formatted tool call
     extractToolInfo(formattedToolCall) {
+        // Remove any existing loading messages before extracting tool info
+        this.elements.messagesContainer.find('.loading-message').remove();
+        
         if (!formattedToolCall) return null;
 
         // Handle Claude format
@@ -897,14 +1057,117 @@ class BedrockChatManager {
 
     // Toggle tool selection
     toggleTool(toolDefinition) {
-        const index = this.selectedTools.findIndex(t => 
-            t.info && t.info.title === toolDefinition.info.title
-        );
+        // Remove any existing loading messages before toggling tool
+        this.elements.messagesContainer.find('.loading-message').remove();
+        
+        // Get model type from config
+        const modelId = this.config.default_model;
+        const isMistral = modelId.includes('mistral.mistral');
+        const isClaude = modelId.includes('anthropic.claude');
+        const isNova = modelId.includes('amazon.nova');
+
+        let normalizedTool;
+        const toolName = toolDefinition.info.title.toLowerCase().replace(/[^a-z0-9]/g, '_');
+        const parameters = this.buildToolParameters(toolDefinition);
+
+        if (isClaude) {
+            // Claude format - only name and input_schema are allowed
+            normalizedTool = {
+                name: toolName,
+                input_schema: parameters
+            };
+        } else if (isMistral) {
+            // Mistral format
+            normalizedTool = {
+                type: 'function',
+                function: {
+                    name: toolName,
+                    description: toolDefinition.info.description || '',
+                    parameters: parameters
+                }
+            };
+        } else if (isNova) {
+            // Nova format
+            normalizedTool = {
+                toolSpec: {
+                    name: toolName,
+                    description: toolDefinition.info.description || '',
+                    inputSchema: {
+                        json: parameters
+                    }
+                }
+            };
+        } else {
+            // Default format
+            normalizedTool = {
+                type: 'function',
+                name: toolName,
+                description: toolDefinition.info.description || '',
+                parameters: parameters
+            };
+        }
+        
+        const index = this.selectedTools.findIndex(t => t.name === normalizedTool.name);
         if (index === -1) {
-            this.selectedTools.push(toolDefinition);
+            this.selectedTools.push(normalizedTool);
         } else {
             this.selectedTools.splice(index, 1);
         }
+    }
+
+    buildToolParameters(toolDefinition) {
+        const paths = toolDefinition.paths || {};
+        const pathKeys = Object.keys(paths);
+        if (!pathKeys.length) return { type: 'object', properties: {}, required: [] };
+
+        const firstPath = pathKeys[0];
+        const pathConfig = paths[firstPath];
+        if (!pathConfig || typeof pathConfig !== 'object') {
+            return { type: 'object', properties: {}, required: [] };
+        }
+
+        const methodKeys = Object.keys(pathConfig);
+        if (!methodKeys.length) return { type: 'object', properties: {}, required: [] };
+
+        const firstMethod = methodKeys[0];
+        const operation = pathConfig[firstMethod];
+
+        // Build parameters schema based on tool type
+        if (operation.requestBody) {
+            // For tools with requestBody (like CodeInterpreter)
+            const schema = operation.requestBody.content['application/json'].schema;
+            return {
+                type: 'object',
+                properties: schema.properties || {},
+                required: schema.required || []
+            };
+        } else if (operation.parameters) {
+            // For tools with query parameters (like DuckDuckGo)
+            const properties = {};
+            const required = [];
+            
+            operation.parameters.forEach(param => {
+                properties[param.name] = {
+                    type: param.schema?.type || 'string',
+                    description: param.description || ''
+                };
+                if (param.required) {
+                    required.push(param.name);
+                }
+            });
+
+            return {
+                type: 'object',
+                properties: properties,
+                required: required
+            };
+        }
+
+        return {
+            type: 'object',
+            properties: {},
+            required: []
+        };
     }
 }
 

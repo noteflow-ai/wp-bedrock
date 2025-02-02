@@ -315,7 +315,8 @@ class BedrockResponseHandler {
         const result = {
             tool_call_id: data.tool_use_id || data.id,
             name: data.name || data.tool_name,
-            content: data.content || data.result || data.tool_result || data.data // Add data fallback for DuckDuckGo response
+            // Pass through the entire result object without wrapping it
+            content: data.content || data.result || data.tool_result || data
         };
 
         // Find and remove the matching tool call
