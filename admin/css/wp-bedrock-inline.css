@@ -1,0 +1,256 @@
+/* Utility Classes */
+.hidden {
+    display: none !important;
+}
+
+/* Chat Container Styles */
+.chat-container {
+    max-width: 1200px;
+    margin: 20px 0;
+}
+
+.chat-main {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.chat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    border-bottom: 1px solid #eee;
+}
+
+.chat-title {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.message-count {
+    color: #666;
+    margin-left: 10px;
+}
+
+.chat-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.chat-messages {
+    height: 500px;
+    overflow-y: auto;
+    padding: 20px;
+}
+
+.chat-input-container {
+    border-top: 1px solid #eee;
+    padding: 15px 20px;
+}
+
+.chat-input-area {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+.input-container {
+    display: flex;
+    gap: 10px;
+}
+
+.input-wrapper {
+    flex-grow: 1;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    background: #f0f0f1;
+    border-radius: 4px;
+    padding: 8px;
+}
+
+.input-wrapper textarea {
+    flex-grow: 1;
+    border: none;
+    background: transparent;
+    resize: none;
+    min-height: 40px;
+    padding: 8px;
+}
+
+.image-preview {
+    margin-top: 10px;
+    position: relative;
+    display: inline-block;
+}
+
+.image-preview img {
+    max-width: 200px;
+    max-height: 200px;
+    border-radius: 4px;
+}
+
+.image-preview button {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    padding: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    cursor: pointer;
+}
+
+/* Tools Modal */
+.tools-container {
+    max-height: 400px;
+    overflow-y: auto;
+    padding: 10px;
+}
+
+.tool-item {
+    border: 1px solid #eee;
+    border-radius: 4px;
+    margin-bottom: 10px;
+    padding: 10px;
+    cursor: pointer;
+}
+
+.tool-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 5px;
+}
+
+.tool-name {
+    font-weight: 600;
+}
+
+.tool-description {
+    color: #666;
+    font-size: 13px;
+}
+
+/* Image Generation Styles */
+.wp-bedrock-tabs {
+    margin: 20px 0;
+    border-bottom: 1px solid #ccd0d4;
+}
+
+.tab-button {
+    padding: 10px 20px;
+    border: none;
+    background: none;
+    cursor: pointer;
+}
+
+.tab-button.active {
+    border-bottom: 2px solid #2271b1;
+    color: #2271b1;
+}
+
+.wp-bedrock-image-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    max-width: 1400px;
+}
+
+.wp-bedrock-image-input,
+.wp-bedrock-image-output {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    padding: 20px;
+}
+
+.prompt-section {
+    margin-bottom: 20px;
+}
+
+.prompt-section textarea {
+    width: 100%;
+    margin: 10px 0;
+}
+
+.button-group {
+    display: flex;
+    gap: 10px;
+}
+
+.wp-bedrock-image-controls {
+    margin-top: 20px;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.settings-panel {
+    margin-bottom: 20px;
+    padding: 15px;
+    background: #f9f9f9;
+    border-radius: 4px;
+}
+
+.setting-group {
+    margin-bottom: 15px;
+}
+
+.setting-group:last-child {
+    margin-bottom: 0;
+}
+
+.dimensions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.dimension-inputs {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.dimension-inputs input {
+    width: 80px;
+}
+
+/* Loading State */
+#wp-bedrock-image-loading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    background: #f0f0f1;
+    border-radius: 4px;
+}
+
+/* Image Result */
+#wp-bedrock-image-result {
+    min-height: 200px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+#wp-bedrock-image-result img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+}

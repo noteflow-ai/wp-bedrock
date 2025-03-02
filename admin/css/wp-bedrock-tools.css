@@ -1,0 +1,111 @@
+/* Tool Message Styles */
+.tool-message {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    margin: 10px 0;
+    padding: 12px;
+}
+
+.tool-message.tool_call {
+    border-left: 4px solid #007bff;
+}
+
+.tool-message.tool_result {
+    border-left: 4px solid #28a745;
+}
+
+.tool-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.tool-icon {
+    margin-right: 8px;
+    font-size: 16px;
+}
+
+.tool-type {
+    font-weight: 600;
+    color: #495057;
+    margin-right: 8px;
+}
+
+.tool-name {
+    color: #6c757d;
+    font-size: 0.9em;
+}
+
+.tool-section-header {
+    font-weight: 500;
+    color: #495057;
+    margin-bottom: 8px;
+}
+
+.tool-code {
+    background: #ffffff;
+    border: 1px solid #e9ecef;
+    border-radius: 4px;
+    padding: 12px;
+    margin: 0;
+    overflow-x: auto;
+}
+
+.tool-code.error {
+    color: #dc3545;
+    background: #fff5f5;
+    border-color: #ffc9c9;
+}
+
+/* Search Results Styles */
+.search-result {
+    background: #ffffff;
+    border: 1px solid #e9ecef;
+    border-radius: 4px;
+    padding: 12px;
+    margin-bottom: 8px;
+}
+
+.search-result:last-child {
+    margin-bottom: 0;
+}
+
+.result-title {
+    font-weight: 600;
+    color: #007bff;
+    margin-bottom: 4px;
+}
+
+.result-snippet {
+    color: #212529;
+    margin-bottom: 4px;
+    line-height: 1.5;
+}
+
+.result-url {
+    color: #28a745;
+    font-size: 0.9em;
+    margin-bottom: 2px;
+    word-break: break-all;
+}
+
+.result-time {
+    color: #6c757d;
+    font-size: 0.8em;
+}
+
+/* Tool Arguments Styles */
+.tool-arguments {
+    margin-bottom: 16px;
+}
+
+.tool-results {
+    margin-top: 8px;
+}
+
+.tool-error {
+    margin-top: 8px;
+}
