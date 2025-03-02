@@ -1,42 +1,215 @@
-/* Admin styles */
-.wrap {
-    max-width: 1200px;
+/* Admin Cards */
+.wrap .card {
+    max-width: 800px;
+    margin-top: 20px;
+    padding: 20px;
 }
 
+.wrap .card h2 {
+    margin-top: 0;
+    color: #1d2327;
+    font-size: 1.4em;
+    margin-bottom: 1em;
+}
+
+.wrap .card p {
+    font-size: 14px;
+    margin: 1em 0;
+    line-height: 1.6;
+}
+
+.wrap .card ul, 
+.wrap .card ol {
+    margin: 1em 0;
+}
+
+.wrap .card li {
+    margin-bottom: 10px;
+    line-height: 1.4;
+}
+
+/* Feature List */
+.feature-list,
+.guide-list,
+.nav-list,
+.support-list {
+    list-style: disc;
+    margin-left: 20px;
+}
+
+.guide-list {
+    list-style: decimal;
+}
+
+/* Settings Form */
 .form-table th {
     width: 200px;
 }
 
 .form-table td {
-    position: relative;
+    padding: 15px 10px;
 }
 
-.form-table .description {
-    margin-top: 5px;
+.form-table td p.description {
+    margin-top: 8px;
     color: #666;
 }
 
-/* Settings page styles */
-.wp-bedrock-settings input[type="text"],
-.wp-bedrock-settings input[type="password"],
-.wp-bedrock-settings select,
-.wp-bedrock-settings textarea {
-    width: 400px;
-    max-width: 100%;
+/* Admin Notices */
+.wpbedrock-notice {
+    padding: 10px;
+    margin: 5px 0 15px;
+    background: #fff;
+    border-left: 4px solid #fff;
+    box-shadow: 0 1px 1px 0 rgba(0,0,0,.1);
 }
 
-.wp-bedrock-settings input[type="number"] {
-    width: 100px;
+.wpbedrock-notice.notice-success {
+    border-left-color: #46b450;
 }
 
-/* Error messages */
-.wp-bedrock-error {
-    color: #dc3232;
-    margin-top: 5px;
+.wpbedrock-notice.notice-error {
+    border-left-color: #dc3232;
 }
 
-/* Success messages */
-.wp-bedrock-success {
-    color: #46b450;
-    margin-top: 5px;
+.wpbedrock-notice.notice-warning {
+    border-left-color: #ffb900;
+}
+
+.wpbedrock-notice.notice-info {
+    border-left-color: #00a0d2;
+}
+
+/* Admin Menu Icon */
+#adminmenu .toplevel_page_wp-bedrock .wp-menu-image img {
+    padding: 6px 0 0;
+    opacity: 0.6;
+    filter: alpha(opacity=60);
+}
+
+#adminmenu .toplevel_page_wp-bedrock:hover .wp-menu-image img,
+#adminmenu .toplevel_page_wp-bedrock.current .wp-menu-image img {
+    opacity: 1;
+    filter: alpha(opacity=100);
+}
+
+/* Settings Tabs */
+.nav-tab-wrapper {
+    margin-bottom: 20px;
+}
+
+.nav-tab-wrapper .nav-tab {
+    font-size: 14px;
+    padding: 8px 12px;
+}
+
+.nav-tab-wrapper .nav-tab-active {
+    border-bottom: 1px solid #fff;
+    background: #fff;
+}
+
+/* Settings Sections */
+.settings-section {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.settings-section h2 {
+    margin-top: 0;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #eee;
+}
+
+.settings-section .form-table {
+    margin-top: 0;
+}
+
+/* Submit Button */
+.submit-row {
+    padding: 15px 0;
+    margin-top: 20px;
+    border-top: 1px solid #eee;
+}
+
+.submit-row .button-primary {
+    margin-right: 10px;
+}
+
+/* Help Text */
+.help-text {
+    color: #666;
+    font-style: italic;
+    margin: 5px 0;
+}
+
+/* Version Info */
+.version-info {
+    color: #666;
+    font-size: 12px;
+    margin-top: 20px;
+    padding-top: 10px;
+    border-top: 1px solid #eee;
+}
+
+/* Settings Page */
+.wp-bedrock-settings-container {
+    max-width: 1200px;
+}
+
+.settings-section {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.settings-section h2 {
+    margin-top: 0;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #eee;
+}
+
+.temperature-control {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: 300px;
+}
+
+.temperature-slider {
+    flex-grow: 1;
+}
+
+.temperature-value {
+    min-width: 40px;
+    text-align: center;
+}
+
+/* Responsive Design */
+@media screen and (max-width: 782px) {
+    .form-table th {
+        width: 100%;
+        display: block;
+    }
+    
+    .form-table td {
+        padding: 10px 0;
+        display: block;
+    }
+    
+    .submit-row {
+        padding: 10px 0;
+    }
+
+    .form-table td {
+        padding: 15px 10px;
+    }
+    
+    .form-table th {
+        padding: 15px 10px 5px;
+    }
 }

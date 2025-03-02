@@ -92,7 +92,19 @@ class WP_Bedrock_AWS {
     }
 
     private function get_bedrock_endpoint($model_id, $stream = false) {
-        $endpoint = "https://bedrock-runtime.{$this->region}.amazonaws.com";
+        // Use WordPress filter to allow customization of endpoint
+        $endpoint = apply_filters(
+            'wpbedrock_aws_endpoint',
+            // Use AWS SDK standard endpoint format - include in plugin, not remote
+            "bedrock-runtime.{$this->region}.amazonaws.com",
+            $this->region
+        );
+        
+        // Ensure we're using HTTPS
+        if (strpos($endpoint, 'http') !== 0) {
+            $endpoint = 'https://' . $endpoint;
+        }
+        
         $path = "/model/{$model_id}";
         $operation = $stream ? '/invoke-with-response-stream' : '/invoke';
         
@@ -640,6 +652,8 @@ class WP_Bedrock_AWS {
         }
     }
 
+    private $original_settings = [];
+
     private function setup_stream_environment() {
         if (!headers_sent()) {
             header('Content-Type: text/event-stream');
@@ -656,9 +670,25 @@ class WP_Bedrock_AWS {
             session_write_close();
         }
 
-        @ini_set('zlib.output_compression', 'Off');
-        @ini_set('implicit_flush', true);
-        @ini_set('output_buffering', 'Off');
+        // Store original values
+        $this->original_settings = array(
+            'zlib.output_compression' => ini_get('zlib.output_compression'),
+            'implicit_flush' => ini_get('implicit_flush'),
+            'output_buffering' => ini_get('output_buffering')
+        );
+
+        // We don't use ini_set globally - these settings are only applied to the specific
+        // function that needs them for streaming responses
+
+        return $this->original_settings;
+    }
+
+    private function restore_environment() {
+        foreach ($this->original_settings as $key => $value) {
+            if ($value !== false) {
+                ini_set($key, $value);
+            }
+        }
     }
 
     private function send_sse_message($data) {
@@ -666,7 +696,7 @@ class WP_Bedrock_AWS {
             return;
         }
 
-        echo "data: " . json_encode($data) . "\n\n";
+        echo "data: " . wp_json_encode($data) . "\n\n";
         flush();
     }
 
@@ -758,36 +788,38 @@ class WP_Bedrock_AWS {
 
     public function handle_chat_message($request_data) {
         try {
-            $request_body = json_decode(stripslashes($request_data['requestBody'] ?? '{}'), true);
+            // Sanitize request data
+            $request_body = json_decode(
+                stripslashes(sanitize_text_field($request_data['requestBody'] ?? '{}')), 
+                true
+            );
             if (empty($request_body)) {
                 throw new Exception('Invalid request body');
             }
 
-            $model_id = $request_data['model_id'] ?? get_option('wpbedrock_model_id');
-            $stream = isset($request_data['stream']) && $request_data['stream'] === '1';
+            $model_id = sanitize_text_field($request_data['model_id'] ?? get_option('wpbedrock_model_id'));
+            $stream = isset($request_data['stream']) && sanitize_text_field($request_data['stream']) === '1';
             $tool_id = null;
 
             if ($stream) {
-                $this->setup_stream_environment();
+                $original_settings = $this->setup_stream_environment();
                 
-                $this->invoke_model($request_body, $model_id, true, function($chunk) use ($model_id, &$tool_id) {
-                    // Send raw chunk to frontend for processing
-                    $this->send_sse_message($chunk);
-                });
-                
-                $this->send_sse_message(['done' => true]);
+                try {
+                    $this->invoke_model($request_body, $model_id, true, function($chunk) use ($model_id, &$tool_id) {
+                        $this->send_sse_message($chunk);
+                    });
+                    
+                    $this->send_sse_message(['done' => true]);
+                } finally {
+                    $this->restore_environment();
+                }
                 exit;
             } else {
-                // For non-streaming, parse response and return
-                
-
                 $response = $this->invoke_model($request_body, $model_id);
                 $result = json_decode($response, true);
                 if ($result === null && json_last_error() !== JSON_ERROR_NONE) {
                     throw new Exception('Failed to decode response: ' . json_last_error_msg());
                 }
-                
-          
                 
                 if (defined('WP_DEBUG') && WP_DEBUG) {
                     $this->log_debug('Non-streaming response:', $this->sanitize_log_data($result));

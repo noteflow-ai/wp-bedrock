@@ -139,6 +139,22 @@ window.initializeChat = async function(container) {
             chatManager.elements.imageUpload.val('');
         });
 
+        // Text preview handling
+        chatManager.elements.closePreviewButton = $('#wpaicg-close-preview');
+        chatManager.elements.textPreview = $('#wpaicg-text-preview');
+        chatManager.elements.previewContent = $('#wpaicg-preview-content');
+        
+        chatManager.elements.closePreviewButton.on('click', () => {
+            chatManager.elements.textPreview.addClass('hidden');
+            chatManager.elements.previewContent.html('');
+        });
+        
+        // Function to show preview
+        chatManager.showPreview = (content) => {
+            chatManager.elements.previewContent.html(content);
+            chatManager.elements.textPreview.removeClass('hidden');
+        };
+
         // Chat management
         chatManager.elements.clearChatButton.on('click', () => chatManager.clearChat());
         chatManager.elements.refreshChatButton.on('click', () => location.reload());

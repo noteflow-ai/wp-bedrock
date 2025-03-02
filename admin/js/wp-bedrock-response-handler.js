@@ -104,16 +104,90 @@ class BedrockResponseHandler {
             this.clearTimeout();
             this.setTimeout();
 
+            const modelId = window.wpbedrock_config?.default_model;
+            const isMistral = modelId?.includes('mistral.mistral');
+            const isClaude = modelId?.includes('anthropic.claude');
+            const isNova = modelId?.includes('amazon.nova');
+
             // Handle Nova model responses
-            if (response.output?.message?.content) {
-                const result = this.processNovaResponse(response.output.message);
-                if (result.content && this.callbacks.onContent) {
-                    this.callbacks.onContent(result);
+            if (isNova && response.output?.message?.content) {
+                const message = response.output.message;
+                if (Array.isArray(message.content)) {
+                    for (const item of message.content) {
+                        if (item.text) {
+                            // Handle text content
+                            if (this.callbacks.onContent) {
+                                this.callbacks.onContent({
+                                    type: 'text',
+                                    content: item.text,
+                                    role: message.role || 'assistant'
+                                });
+                            }
+                        } else if (item.toolUse) {
+                            // Handle tool use
+                            const toolCall = this.processToolCall({ toolUse: item.toolUse });
+                            if (toolCall && this.callbacks.onToolCall) {
+                                this.callbacks.onToolCall(toolCall);
+                                return;
+                            }
+                        } else if (item.toolResult) {
+                            // Handle tool result
+                            const result = this.processToolResult({ toolResult: item.toolResult });
+                            if (result && this.callbacks.onToolResult) {
+                                this.callbacks.onToolResult(result);
+                            }
+                        }
+                    }
                 }
                 return;
             }
 
-            // Handle tool calls and Claude's tool_use
+            // Handle Claude responses
+            if (isClaude && Array.isArray(response.content)) {
+                for (const item of response.content) {
+                    if (item.type === 'text') {
+                        // Handle text content
+                        if (this.callbacks.onContent) {
+                            this.callbacks.onContent({
+                                type: 'text',
+                                content: item.text,
+                                role: 'assistant'
+                            });
+                        }
+                    } else if (item.type === 'tool_use') {
+                        // Handle tool use
+                        const toolCall = this.processToolCall(item);
+                        if (toolCall && this.callbacks.onToolCall) {
+                            this.callbacks.onToolCall(toolCall);
+                            return;
+                        }
+                    }
+                }
+                return;
+            }
+
+            // Handle Mistral responses
+            if (isMistral) {
+                if (response.tool_calls) {
+                    // Handle tool calls
+                    const toolCalls = response.tool_calls.map(call => this.processToolCall(call));
+                    toolCalls.forEach(toolCall => {
+                        if (toolCall && this.callbacks.onToolCall) {
+                            this.callbacks.onToolCall(toolCall);
+                        }
+                    });
+                    return;
+                } else if (response.role === 'tool') {
+                    // Handle tool results
+                    const result = this.processToolResult(response);
+                    if (result && this.callbacks.onToolResult) {
+                        this.callbacks.onToolResult(result);
+                    }
+                    return;
+                }
+            }
+
+            // Handle generic tool calls and results
             if (response.type === 'tool_call' || response.type === 'tool_use') {
                 const toolCall = this.processToolCall(response);
                 if (toolCall && this.callbacks.onToolCall) {
@@ -122,7 +196,6 @@ class BedrockResponseHandler {
                 return;
             }
 
-            // Handle tool results
             if (response.type === 'tool_result') {
                 const result = this.processToolResult(response);
                 if (result && this.callbacks.onToolResult) {
@@ -167,36 +240,105 @@ class BedrockResponseHandler {
                 throw error;
             }
 
+            const modelId = window.wpbedrock_config?.default_model;
+            const isMistral = modelId?.includes('mistral.mistral');
+            const isClaude = modelId?.includes('anthropic.claude');
+            const isNova = modelId?.includes('amazon.nova');
+
             // Handle Nova model responses
-            if (data.output?.message) {
+            if (isNova && data.output?.message) {
                 const message = data.output.message;
-                const content = message.content?.[0]?.text || '';
+                if (Array.isArray(message.content)) {
+                    for (const item of message.content) {
+                        if (item.text) {
+                            // Handle text content
+                            return {
+                                type: 'text',
+                                content: item.text,
+                                role: message.role || 'assistant'
+                            };
+                        } else if (item.toolUse) {
+                            // Handle tool use
+                            const toolCall = this.processToolCall({ toolUse: item.toolUse });
+                            if (toolCall && this.callbacks.onToolCall) {
+                                this.callbacks.onToolCall(toolCall);
+                                return {
+                                    type: 'tool_call',
+                                    content: toolCall
+                                };
+                            }
+                        } else if (item.toolResult) {
+                            // Handle tool result
+                            const result = this.processToolResult({ toolResult: item.toolResult });
+                            if (result && this.callbacks.onToolResult) {
+                                this.callbacks.onToolResult(result);
+                                return {
+                                    type: 'tool_result',
+                                    content: result
+                                };
+                            }
+                        }
+                    }
+                }
                 return {
                     type: 'text',
-                    content: content,
+                    content: '',
                     role: message.role || 'assistant'
                 };
             }
 
-            // Handle Claude's content array format
-            if (Array.isArray(data.content)) {
+            // Handle Claude responses
+            if (isClaude && Array.isArray(data.content)) {
                 for (const item of data.content) {
-                    if (item.type === 'tool_use') {
+                    if (item.type === 'text') {
+                        // Handle text content
+                        return {
+                            type: 'text',
+                            content: item.text,
+                            role: 'assistant'
+                        };
+                    } else if (item.type === 'tool_use') {
+                        // Handle tool use
                         const toolCall = this.processToolCall(item);
                         if (toolCall && this.callbacks.onToolCall) {
                             this.callbacks.onToolCall(toolCall);
+                            return {
+                                type: 'tool_call',
+                                content: toolCall
+                            };
                         }
-                        return {
-                            type: 'tool_call',
-                            content: toolCall
-                        };
-                    } else if (item.type === 'text') {
-                        this.appendToBuffer(item.text);
                     }
                 }
             }
 
-            // Handle tool calls and Claude's tool_use
+            // Handle Mistral responses
+            if (isMistral) {
+                if (data.tool_calls) {
+                    // Handle tool calls
+                    const toolCalls = data.tool_calls.map(call => this.processToolCall(call));
+                    toolCalls.forEach(toolCall => {
+                        if (toolCall && this.callbacks.onToolCall) {
+                            this.callbacks.onToolCall(toolCall);
+                        }
+                    });
+                    return {
+                        type: 'tool_call',
+                        content: toolCalls
+                    };
+                } else if (data.role === 'tool') {
+                    // Handle tool results
+                    const result = this.processToolResult(data);
+                    if (result && this.callbacks.onToolResult) {
+                        this.callbacks.onToolResult(result);
+                        return {
+                            type: 'tool_result',
+                            content: result
+                        };
+                    }
+                }
+            }
+
+            // Handle generic tool calls and results
             if (data.tool_calls || data.type === 'tool_use') {
                 const toolCalls = data.tool_calls || [data];
                 const processed = toolCalls.map(call => this.processToolCall(call));
@@ -211,7 +353,6 @@ class BedrockResponseHandler {
                 };
             }
 
-            // Handle tool results
             if (data.tool_result || data.type === 'tool_result') {
                 const result = this.processToolResult(data);
                 if (result && this.callbacks.onToolResult) {
@@ -253,8 +394,8 @@ class BedrockResponseHandler {
         // Process array of content items
         if (Array.isArray(message.content)) {
             const text = message.content
-                .filter(item => item && typeof item === 'object')
-                .map(item => item.text || '')
+                .filter(item => item && typeof item === 'object' && item.text)
+                .map(item => item.text)
                 .join('');
 
             return {
@@ -273,17 +414,51 @@ class BedrockResponseHandler {
     }
 
     processToolCall(data) {
-        // Handle Claude's tool_use format
-        const toolCall = {
-            id: data.id || `call_${Date.now()}`,
-            name: data.name || data.tool_name,
-            function: {
+        const modelId = window.wpbedrock_config?.default_model;
+        const isMistral = modelId?.includes('mistral.mistral');
+        const isClaude = modelId?.includes('anthropic.claude');
+        const isNova = modelId?.includes('amazon.nova');
+
+        let toolCall;
+        const toolCallId = `call_${Date.now()}`;
+
+        if (isClaude) {
+            // Format for Claude
+            toolCall = {
+                id: data.id || toolCallId,
+                name: data.name,
+                arguments: typeof data.input === 'string' ? 
+                    JSON.parse(data.input) : 
+                    data.input
+            };
+        } else if (isMistral) {
+            // Format for Mistral
+            toolCall = {
+                id: data.id || toolCallId,
+                name: data.function?.name || data.name,
+                arguments: typeof data.function?.arguments === 'string' ? 
+                    data.function.arguments : 
+                    JSON.stringify(data.function?.arguments || data.arguments || {})
+            };
+        } else if (isNova) {
+            // Format for Nova
+            toolCall = {
+                id: data.toolUse?.toolUseId || toolCallId,
+                name: data.toolUse?.name || data.name,
+                arguments: typeof data.toolUse?.input === 'string' ? 
+                    JSON.parse(data.toolUse.input) : 
+                    data.toolUse?.input || data.arguments || {}
+            };
+        } else {
+            // Default format
+            toolCall = {
+                id: data.id || toolCallId,
                 name: data.name || data.tool_name,
                 arguments: typeof data.input === 'string' ? 
-                    data.input : 
-                    JSON.stringify(data.input || data.arguments || data.tool_arguments || {})
-            }
-        };
+                    JSON.parse(data.input) : 
+                    data.input || data.arguments || data.tool_arguments || {}
+            };
+        }
 
         this.pendingToolCalls.set(toolCall.id, toolCall);
 
@@ -311,13 +486,94 @@ class BedrockResponseHandler {
     }
 
     processToolResult(data) {
-        // Handle Claude's tool_use format
-        const result = {
-            tool_call_id: data.tool_use_id || data.id,
-            name: data.name || data.tool_name,
-            // Pass through the entire result object without wrapping it
-            content: data.content || data.result || data.tool_result || data
-        };
+        const modelId = window.wpbedrock_config?.default_model;
+        const isMistral = modelId?.includes('mistral.mistral');
+        const isClaude = modelId?.includes('anthropic.claude');
+        const isNova = modelId?.includes('amazon.nova');
+
+        let result;
+        const toolCallId = `call_${Date.now()}`;
+
+        try {
+            if (isClaude) {
+                // Format for Claude
+                let output;
+                if (data.content?.output) {
+                    output = data.content.output;
+                } else if (data.content?.content?.output) {
+                    output = data.content.content.output;
+                } else if (data.content) {
+                    output = data.content;
+                } else {
+                    output = data;
+                }
+
+                result = {
+                    tool_call_id: data.tool_use_id || toolCallId,
+                    name: data.name,
+                    output: typeof output === 'string' ? 
+                        JSON.parse(output) : 
+                        output
+                };
+            } else if (isMistral) {
+                // Format for Mistral
+                let output;
+                if (data.content) {
+                    output = typeof data.content === 'string' ? 
+                        JSON.parse(data.content) : 
+                        data.content;
+                } else if (data.result) {
+                    output = data.result;
+                } else {
+                    output = data;
+                }
+
+                result = {
+                    tool_call_id: data.tool_call_id || toolCallId,
+                    name: data.name || data.function?.name,
+                    output: typeof output === 'string' ? 
+                        JSON.parse(output) : 
+                        output
+                };
+            } else if (isNova) {
+                // Format for Nova
+                let output;
+                if (data.toolResult?.content?.[0]?.json?.content?.output) {
+                    output = data.toolResult.content[0].json.content.output;
+                } else if (data.toolResult?.content?.[0]?.json?.content) {
+                    output = data.toolResult.content[0].json.content;
+                } else if (data.toolResult?.content) {
+                    output = data.toolResult.content;
+                } else {
+                    output = data.content || data;
+                }
+
+                result = {
+                    tool_call_id: data.toolResult?.toolUseId || toolCallId,
+                    name: data.toolResult?.name || data.name,
+                    output: typeof output === 'string' ? 
+                        JSON.parse(output) : 
+                        output
+                };
+            } else {
+                // Default format
+                const output = data.output || data.content || data.result || data.tool_result || data;
+                result = {
+                    tool_call_id: data.tool_use_id || data.id || toolCallId,
+                    name: data.name || data.tool_name,
+                    output: typeof output === 'string' ? 
+                        JSON.parse(output) : 
+                        output
+                };
+            }
+        } catch (error) {
+            console.error('[BedrockResponseHandler] Error processing tool result:', error);
+            result = {
+                tool_call_id: toolCallId,
+                name: data.name || 'unknown',
+                output: data
+            };
+        }
 
         // Find and remove the matching tool call
         for (const [callId, toolCall] of this.pendingToolCalls.entries()) {

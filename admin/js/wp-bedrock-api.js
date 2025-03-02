@@ -62,7 +62,7 @@ class BedrockAPI {
     }
 
     // Format message for display with tool support
-    static formatMessageContent(content, md) {
+    static formatMessageContent(content, md, modelId = '') {
         if (typeof content === 'string') {
             return md.render(content);
         }
@@ -78,9 +78,9 @@ class BedrockAPI {
                             return `<img src="${imageUrl}" alt="Generated image" class="generated-image">`;
                         case 'tool_call':
                         case 'tool_use':  // Handle Claude's tool_use type
-                            return this.formatToolCall(item);
+                            return this.formatToolCall(item, modelId);
                         case 'tool_result':
-                            return this.formatToolResult(item);
+                            return this.formatToolResult(item, modelId);
                         default:
                             return '';
                     }
@@ -91,10 +91,10 @@ class BedrockAPI {
         // Handle tool-specific content objects
         if (content && typeof content === 'object') {
             if (content.type === 'tool_call' || content.type === 'tool_use') {  // Handle Claude's tool_use type
-                return this.formatToolCall(content);
+                return this.formatToolCall(content, modelId);
             }
             if (content.type === 'tool_result') {
-                return this.formatToolResult(content);
+                return this.formatToolResult(content, modelId);
             }
         }
 
@@ -102,17 +102,21 @@ class BedrockAPI {
     }
 
     // Format tool call for display
-    static formatToolCall(toolCall) {
+    static formatToolCall(toolCall, modelId = '') {
         // Handle Claude's tool_use format
         const name = toolCall.name || toolCall.content?.name || toolCall.tool_name || '';
         const args = toolCall.arguments || toolCall.content?.arguments || toolCall.tool_arguments || {};
         
         return `<div class="tool-message tool-call">
             <div class="tool-header">
+                <span class="tool-icon">🔧</span>
                 <span class="tool-type">Tool Call</span>
                 <span class="tool-name">${name}</span>
             </div>
-            <pre class="tool-content"><code>${JSON.stringify(args, null, 2)}</code></pre>
+            <div class="tool-arguments">
+                <div class="tool-section-header">Arguments:</div>
+                <pre class="tool-code"><code>${JSON.stringify(args, null, 2)}</code></pre>
+            </div>
         </div>`;
     }
 
@@ -120,14 +124,56 @@ class BedrockAPI {
     static formatToolResult(toolResult) {
         // Handle Claude's tool_use format
         const name = toolResult.name || toolResult.content?.name || toolResult.tool_name || '';
-        const result = toolResult.output || toolResult.result || toolResult.content?.result || toolResult.tool_result || {};
+        const result = toolResult.output || toolResult.result || toolResult.content?.result || toolResult.tool_result || toolResult.content || {};
         
+        // Handle search results specially
+        if (result.type === 'search_results' && Array.isArray(result.results)) {
+            return `<div class="tool-message tool-result">
+                <div class="tool-header">
+                    <span class="tool-icon">📋</span>
+                    <span class="tool-type">Tool Result</span>
+                    <span class="tool-name">${name}</span>
+                </div>
+                <div class="tool-results">
+                    <div class="tool-section-header">Search Results for: "${result.query}"</div>
+                    ${result.results.map(item => `
+                        <div class="search-result">
+                            <div class="result-title">${item.title}</div>
+                            <div class="result-snippet">${item.snippet}</div>
+                            <div class="result-url">${item.url}</div>
+                            ${item.time ? `<div class="result-time">${item.time}</div>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            </div>`;
+        }
+
+        // Handle error results
+        if (result.error) {
+            return `<div class="tool-message tool-result">
+                <div class="tool-header">
+                    <span class="tool-icon">⚠️</span>
+                    <span class="tool-type">Tool Result</span>
+                    <span class="tool-name">${name}</span>
+                </div>
+                <div class="tool-error">
+                    <div class="tool-section-header">Error:</div>
+                    <pre class="tool-code error"><code>${result.error}</code></pre>
+                </div>
+            </div>`;
+        }
+
+        // Default result display
         return `<div class="tool-message tool-result">
             <div class="tool-header">
+                <span class="tool-icon">📋</span>
                 <span class="tool-type">Tool Result</span>
                 <span class="tool-name">${name}</span>
             </div>
-            <pre class="tool-content"><code>${JSON.stringify(result, null, 2)}</code></pre>
+            <div class="tool-results">
+                <div class="tool-section-header">Result:</div>
+                <pre class="tool-code"><code>${JSON.stringify(result, null, 2)}</code></pre>
+            </div>
         </div>`;
     }
 
@@ -147,11 +193,33 @@ class BedrockAPI {
 
     // Normalize messages to ensure model-specific requirements are met with enhanced tool handling
     static normalizeMessages(messages, model) {
+        // Filter out messages with empty content and ensure valid content format
+        messages = messages.map(msg => {
+            // Ensure content is in correct format
+            if (!msg.content) {
+                msg.content = [{ type: 'text', text: ';' }];
+            } else if (typeof msg.content === 'string') {
+                msg.content = [{ type: 'text', text: msg.content || ';' }];
+            } else if (Array.isArray(msg.content) && msg.content.length === 0) {
+                msg.content = [{ type: 'text', text: ';' }];
+            } else if (Array.isArray(msg.content)) {
+                msg.content = msg.content.map(item => {
+                    if (typeof item === 'string') {
+                        return { type: 'text', text: item || ';' };
+                    }
+                    if (item.type === 'text') {
+                        return { type: 'text', text: item.text || ';' };
+                    }
+                    return item;
+                });
+            }
+            return msg;
+        });
+
         // Group messages by role
         const systemMessages = messages.filter(msg => msg.role === 'system');
         const userMessages = messages.filter(msg => msg.role === 'user');
         const assistantMessages = messages.filter(msg => msg.role === 'assistant');
-       
         
         let normalizedMessages = [];
 
@@ -176,7 +244,16 @@ class BedrockAPI {
                         normalizedMessages.push(userMessages[messageIndex]);
                     }
                     if (messageIndex < assistantMessages.length) {
-                        normalizedMessages.push(assistantMessages[messageIndex]);
+                        const assistantMsg = assistantMessages[messageIndex];
+                        // Ensure assistant messages have non-empty content
+                        if (!assistantMsg.content || (Array.isArray(assistantMsg.content) && assistantMsg.content.length === 0)) {
+                            normalizedMessages.push({
+                                role: 'assistant',
+                                content: [{ type: 'text', text: ';' }]
+                            });
+                        } else {
+                            normalizedMessages.push(assistantMsg);
+                        }
                     }
                     messageIndex++;
                 }
@@ -186,19 +263,30 @@ class BedrockAPI {
             if (systemMessages.length > 0) {
                 normalizedMessages.push(...systemMessages.map(msg => ({
                     ...msg,
-                    role: 'user' // Claude treats system messages as user messages
+                    role: 'user', // Claude treats system messages as user messages
+                    content: Array.isArray(msg.content) ? msg.content : [{ type: 'text', text: msg.content || ';' }]
                 })));
             }
             
             let messageIndex = 0;
             while (messageIndex < Math.max(userMessages.length, assistantMessages.length)) {
                 if (messageIndex < userMessages.length) {
-                    normalizedMessages.push(userMessages[messageIndex]);
+                    const userMsg = userMessages[messageIndex];
+                    normalizedMessages.push({
+                        ...userMsg,
+                        content: Array.isArray(userMsg.content) ? userMsg.content : [{ type: 'text', text: userMsg.content || ';' }]
+                    });
                 }
                 if (messageIndex < assistantMessages.length) {
-                    normalizedMessages.push(assistantMessages[messageIndex]);
+                    const assistantMsg = assistantMessages[messageIndex];
+                    normalizedMessages.push({
+                        ...assistantMsg,
+                        content: Array.isArray(assistantMsg.content) ? 
+                            (assistantMsg.content.length > 0 ? assistantMsg.content : [{ type: 'text', text: ';' }]) :
+                            [{ type: 'text', text: assistantMsg.content || ';' }]
+                    });
                 } else if (messageIndex < userMessages.length - 1) {
-                    // Add empty assistant response between consecutive user messages
+                    // Add non-empty assistant response between consecutive user messages
                     normalizedMessages.push({
                         role: 'assistant',
                         content: [{ type: 'text', text: ';' }]
@@ -208,7 +296,12 @@ class BedrockAPI {
             }
         } else {
             // Default handling for other models
-            normalizedMessages = [...messages];
+            normalizedMessages = messages.map(msg => ({
+                ...msg,
+                content: Array.isArray(msg.content) ? 
+                    (msg.content.length > 0 ? msg.content : [{ type: 'text', text: ';' }]) :
+                    [{ type: 'text', text: msg.content || ';' }]
+            }));
         }
 
         return normalizedMessages;
@@ -335,19 +428,69 @@ class BedrockAPI {
             throw new Error('Model ID is required');
         }
 
-   
-
         const model = modelConfig.model;
-        
-        // Normalize and filter messages based on model
-        let normalizedMessages = this.normalizeMessages(messages, model);
-        
-        // For Claude, ensure the last message is not from assistant when using tools
-        if (model.includes("anthropic.claude") && tools?.length > 0) {
-            if (normalizedMessages[normalizedMessages.length - 1]?.role === 'assistant') {
-                normalizedMessages = normalizedMessages.slice(0, -1);
+
+        // Filter out empty messages first
+        messages = messages.filter(msg => {
+            if (!msg.content) return false;
+            if (Array.isArray(msg.content) && msg.content.length === 0) return false;
+            if (typeof msg.content === 'string' && !msg.content.trim()) return false;
+            return true;
+        });
+
+        // When using tools, ensure they are properly configured for each model
+        if (tools?.length > 0) {
+            // For Claude, keep initial user message and tool results
+            if (model.includes("anthropic.claude")) {
+                const userMessages = messages.filter(msg => msg.role === 'user');
+                const toolResults = messages.filter(msg => 
+                    msg.content?.some?.(item => 
+                        item.type === 'tool_result' || 
+                        item.type === 'tool_use' ||
+                        (item.type === 'text' && item.text?.includes('tool_result'))
+                    )
+                );
+                
+                if (userMessages.length === 0) {
+                    throw new Error('At least one user message is required');
+                }
+
+                // Keep only the first user message and any tool results
+                messages = [
+                    userMessages[0],
+                    ...toolResults
+                ];
+            }
+            // For Mistral, ensure tool calls are properly formatted
+            else if (model.includes("mistral.mistral")) {
+                const toolCalls = messages.filter(msg => msg.tool_calls);
+                const toolResults = messages.filter(msg => msg.role === 'tool');
+                messages = [
+                    ...messages.filter(msg => !msg.tool_calls && msg.role !== 'tool'),
+                    ...toolCalls,
+                    ...toolResults
+                ];
+            }
+            // For Nova, ensure toolUse and toolResult are properly formatted
+            else if (model.includes("amazon.nova")) {
+                const toolUses = messages.filter(msg => 
+                    msg.content?.some?.(item => item.toolUse)
+                );
+                const toolResults = messages.filter(msg => 
+                    msg.content?.some?.(item => item.toolResult)
+                );
+                messages = [
+                    ...messages.filter(msg => 
+                        !msg.content?.some?.(item => item.toolUse || item.toolResult)
+                    ),
+                    ...toolUses,
+                    ...toolResults
+                ];
             }
         }
+        
+        // Normalize messages
+        let normalizedMessages = this.normalizeMessages(messages, model);
         
         // Format final request based on model type
         if (model.includes("anthropic.claude")) {
@@ -367,161 +510,111 @@ class BedrockAPI {
 
     // Model-specific formatters
     static formatClaudeRequest(messages, modelConfig, tools = []) {
-        // First filter out empty messages and format content
-        const validMessages = messages.filter(msg => {
+        // Filter out empty messages first
+        messages = messages.filter(msg => {
             if (!msg.content) return false;
-            if (typeof msg.content === "string" && !msg.content.trim()) return false;
             if (Array.isArray(msg.content) && msg.content.length === 0) return false;
+            if (typeof msg.content === "string" && !msg.content.trim()) return false;
             return true;
         });
 
-        // Format each message's content
-        const formattedMessages = validMessages.map(msg => {
-            const { role, content } = msg;
-            const mappedRole = this.ClaudeMapper[role] || "user";
+        const keys = ["system", "user"];
+        // roles must alternate between "user" and "assistant" in claude, so add a fake assistant message between two user messages
+        for (let i = 0; i < messages.length - 1; i++) {
+            const message = messages[i];
+            const nextMessage = messages[i + 1];
 
-            // Convert array content to string for Claude
-            if (Array.isArray(content)) {
-                const textContent = content
-                    .filter(item => {
-                        if (item.type === "text" || item.text) return true;
-                        if (item.type === "tool_use") return true;
-                        if (item.type === "tool_result") return true;
-                        return false;
-                    })
-                    .map(item => {
-                        if (item.type === "text" || item.text) {
-                            return item.text || "";
-                        }
-                        if (item.type === "tool_use") {
-                            return `Using tool: ${item.name}\nInput: ${JSON.stringify(item.input)}`;
-                        }
-                        if (item.type === "tool_result") {
-                            const output = item.content?.output || item.content;
-                            return `Tool result: ${JSON.stringify({ output })}`;
-                        }
-                        return "";
-                    })
-                    .filter(text => text.trim())
-                    .join("\n");
-                
-                if (textContent) {
-                    return {
-                        role: mappedRole,
-                        content: textContent
-                    };
-                }
-                return null;
-            }
-
-            // Handle string content
-            if (typeof content === "string") {
-                return {
-                    role: mappedRole,
-                    content: content
-                };
-            }
-
-            // Handle object content
-            if (content && typeof content === "object") {
-                if (content.type === "text" || content.text) {
-                    const text = content.text || content.content;
-                    if (text && text.trim()) {
-                        return {
-                            role: mappedRole,
-                            content: text
-                        };
+            if (keys.includes(message.role) && keys.includes(nextMessage.role)) {
+                messages[i] = [
+                    message,
+                    {
+                        role: "assistant",
+                        content: [{ type: "text", text: ";" }]
                     }
-                }
-
-                // Handle tool use
-                if (content.type === "tool_use") {
-                    return {
-                        role: mappedRole,
-                        content: `Using tool: ${content.name}\nInput: ${JSON.stringify(content.input)}`
-                    };
-                }
-
-                // Handle tool result
-                if (content.type === "tool_result") {
-                    return {
-                        role: mappedRole,
-                        content: `Tool result: ${JSON.stringify(content.content)}`
-                    };
-                }
+                ];
             }
-
-            return null;
-        }).filter(msg => msg !== null);
-
-        // Ensure messages alternate between user and assistant
-        const finalMessages = [];
-        let lastRole = null;
-
-        for (const msg of formattedMessages) {
-            if (msg.role === lastRole) {
-                // If same role appears twice, add an empty response from the other role
-                finalMessages.push({
-                    role: msg.role === "user" ? "assistant" : "user",
-                    content: "Continuing the conversation..."
-                });
-            }
-            finalMessages.push(msg);
-            lastRole = msg.role;
         }
 
+        const prompt = messages
+            .flat()
+            .map(v => {
+                const { role, content } = v;
+                const insideRole = this.ClaudeMapper[role] || "user";
+
+                // Ensure content is always an array of objects with type and text/image_url
+                let formattedContent;
+                if (typeof content === "string") {
+                    formattedContent = [{ type: "text", text: content || ";" }];
+                } else if (Array.isArray(content)) {
+                    formattedContent = content.map(item => {
+                        if (typeof item === "string") {
+                            return { type: "text", text: item || ";" };
+                        }
+                        if (item.type === "text") {
+                            return { type: "text", text: item.text || ";" };
+                        }
+                        if (item.image_url) {
+                            const { url = "" } = item.image_url;
+                            const colonIndex = url.indexOf(":");
+                            const semicolonIndex = url.indexOf(";");
+                            const comma = url.indexOf(",");
+
+                            const mimeType = url.slice(colonIndex + 1, semicolonIndex);
+                            const encodeType = url.slice(semicolonIndex + 1, comma);
+                            const data = url.slice(comma + 1);
+
+                            return {
+                                type: "image",
+                                source: {
+                                    type: encodeType,
+                                    media_type: mimeType,
+                                    data
+                                }
+                            };
+                        }
+                        return { type: "text", text: ";" };
+                    });
+                } else {
+                    formattedContent = [{ type: "text", text: ";" }];
+                }
+
+                return {
+                    role: insideRole,
+                    content: formattedContent
+                };
+            });
+
         // Ensure first message is from user
-        if (finalMessages[0]?.role === "assistant") {
-            finalMessages.unshift({
+        if (prompt[0]?.role === "assistant") {
+            prompt.unshift({
                 role: "user",
-                content: "Starting the conversation..."
+                content: [{ type: "text", text: ";" }]
             });
         }
 
-        // Ensure required Claude parameters are present
         const requestBody = {
-            messages: finalMessages,
-            max_tokens: Number(modelConfig.max_tokens || 2000),
-            temperature: Number(modelConfig.temperature || 0.7),
-            top_p: Number(modelConfig.top_p || 0.9),
-            anthropic_version: modelConfig.anthropic_version || "bedrock-2023-05-31"
+            anthropic_version: modelConfig.anthropic_version || "bedrock-2023-05-31",
+            max_tokens: modelConfig.max_tokens || 2000,
+            messages: prompt,
+            temperature: modelConfig.temperature || 0.7,
+            top_p: modelConfig.top_p || 0.9,
+            top_k: modelConfig.top_k || 5
         };
 
-        // Add tools if they exist and are properly formatted
+        // Add tools if available for Claude models
         if (tools && tools.length > 0) {
-            // Filter and format tools based on model type
-            if (modelConfig.model.includes('anthropic.claude')) {
-                // Claude format: only name and input_schema
-                const validTools = tools.filter(tool => 
-                    tool && tool.name && tool.input_schema && typeof tool.input_schema === 'object'
-                );
-                if (validTools.length > 0) {
-                    requestBody.tools = validTools;
+            requestBody.tools = tools.map(tool => {
+                // Handle both direct Claude format and function format
+                if (tool.name && tool.input_schema) {
+                    return tool;
                 }
-            } else if (modelConfig.model.includes('mistral.mistral')) {
-                // Mistral format: type, function with name, description, parameters
-                const validTools = tools.filter(tool => 
-                    tool && tool.type === 'function' && tool.function?.name && tool.function?.parameters
-                );
-                if (validTools.length > 0) {
-                    requestBody.tools = validTools;
-                }
-            } else if (modelConfig.model.includes('amazon.nova')) {
-                // Nova format: toolSpec with name, description, inputSchema
-                const validTools = tools.filter(tool => 
-                    tool && tool.toolSpec?.name && tool.toolSpec?.inputSchema
-                );
-                if (validTools.length > 0) {
-                    requestBody.toolConfig = {
-                        tools: validTools,
-                        toolChoice: { auto: {} }
-                    };
-                }
-            }
+                return {
+                    name: tool.function?.name || tool.name || "",
+                    description: tool.function?.description || tool.description || "",
+                    input_schema: tool.function?.parameters || tool.input_schema || {}
+                };
+            });
         }
-
-        // Log request for debugging
-        console.log('[BedrockAPI] Claude request:', JSON.stringify(requestBody, null, 2));
 
         return requestBody;
     }
@@ -532,7 +625,53 @@ class BedrockAPI {
         const conversationMessages = messages.filter(m => m.role !== "system");
 
         // Build request body according to Nova schema
-        const requestBody = {};
+        const requestBody = {
+            schemaVersion: "messages-v1",
+            messages: conversationMessages.map(message => {
+                const content = Array.isArray(message.content) ? 
+                    message.content : 
+                    [{ text: this.getMessageTextContent(message) }];
+
+                return {
+                    role: message.role,
+                    content: content.map(item => {
+                        // Handle text content
+                        if (item.text || typeof item === "string") {
+                            return { text: item.text || item };
+                        }
+                        // Handle image content
+                        if (item.image_url?.url) {
+                            const { url = "" } = item.image_url;
+                            const colonIndex = url.indexOf(":");
+                            const semicolonIndex = url.indexOf(";");
+                            const comma = url.indexOf(",");
+
+                            // Extract format from mime type
+                            const mimeType = url.slice(colonIndex + 1, semicolonIndex);
+                            const format = mimeType.split("/")[1];
+                            const data = url.slice(comma + 1);
+
+                            return {
+                                image: {
+                                    format,
+                                    source: {
+                                        bytes: data
+                                    }
+                                }
+                            };
+                        }
+                        return item;
+                    })
+                };
+            }),
+            inferenceConfig: {
+                temperature: Number(modelConfig.temperature || 0.8),
+                top_p: Number(modelConfig.top_p || 0.9),
+                top_k: Number(modelConfig.top_k || 50),
+                max_new_tokens: Number(modelConfig.max_tokens || 1000),
+                stopSequences: modelConfig.stop || []
+            }
+        };
 
         // Add system message if present
         if (systemMessage) {
@@ -541,91 +680,36 @@ class BedrockAPI {
             }];
         }
 
-        // Format conversation messages
-        requestBody.messages = conversationMessages.map(message => {
-            let formattedContent;
-            
-            // Handle array content
-            if (Array.isArray(message.content)) {
-                formattedContent = message.content.map(item => {
-                    // Handle string items
-                    if (typeof item === "string") {
-                        return { text: item };
+            // Add tools if available
+            if (tools && tools.length > 0) {
+                // Format tools for Nova
+                const validTools = tools.map(tool => {
+                    // Handle both direct Nova format and function format
+                    if (tool.toolSpec) {
+                        return tool; // Already in Nova format
                     }
-                    
-                    // Handle text content
-                    if (item.text || item.type === "text") {
-                        return { text: item.text || "" };
-                    }
-                    
-                    // Handle image content
-                    if (item.image_url?.url) {
-                        const { url = "" } = item.image_url;
-                        if (url.startsWith('data:')) {
-                            const [header, data] = url.split(',');
-                            const mimeType = header.split(':')[1].split(';')[0];
-                            const format = mimeType.split('/')[1];
-                            return {
-                                image: {
-                                    format: format,
-                                    source: {
-                                        bytes: data
-                                    }
+                    return {
+                        toolSpec: {
+                            name: tool.name || tool.function?.name || "",
+                            description: tool.description || tool.function?.description || "",
+                            inputSchema: {
+                                json: tool.function?.parameters || {
+                                    type: "object",
+                                    properties: {},
+                                    required: []
                                 }
-                            };
+                            }
                         }
-                    }
-                    return null;
-                }).filter(Boolean);
-            } else {
-                // Handle string content with proper encoding
-                const messageText = typeof message.content === "string" ? 
-                    message.content : 
-                    this.getMessageTextContent(message);
-                
-                formattedContent = [{
-                    text: messageText || " " // Ensure non-empty content with proper encoding
-                }];
+                    };
+                });
+
+                if (validTools.length > 0) {
+                    requestBody.toolConfig = {
+                        tools: validTools,
+                        toolChoice: { auto: {} }
+                    };
+                }
             }
-
-            // Ensure we have valid content
-            if (!formattedContent || formattedContent.length === 0) {
-                formattedContent = [{ text: " " }]; // Space to ensure non-empty content
-            }
-
-            return {
-                role: message.role,
-                content: formattedContent
-            };
-        });
-
-        // Add inference configuration
-        requestBody.inferenceConfig = {
-            temperature: Number(modelConfig.temperature || 0.8),
-            top_p: Number(modelConfig.top_p || 0.9),
-            top_k: Number(modelConfig.top_k || 50),
-            max_new_tokens: Number(modelConfig.max_tokens || 1000),
-            stopSequences: modelConfig.stop || []
-        };
-
-        // Log the request for debugging
-        console.log('[BedrockAPI] Nova request:', JSON.stringify(requestBody, null, 2));
-
-        // Add tool configuration if tools are present
-        if (tools.length > 0) {
-            requestBody.toolConfig = {
-                tools: tools.map(tool => ({
-                    toolSpec: {
-                        name: tool?.function?.name || "",
-                        description: tool?.function?.description || "",
-                        inputSchema: {
-                            json: tool?.function?.parameters || {}
-                        }
-                    }
-                })),
-                toolChoice: { auto: {} }
-            };
-        }
 
         return requestBody;
     }
@@ -833,16 +917,28 @@ class BedrockAPI {
             top_p: modelConfig.top_p || 0.9
         };
 
-        if (tools.length > 0) {
-            requestBody.tool_choice = "auto";
-            requestBody.tools = tools.map(tool => ({
-                type: "function",
-                function: {
-                    name: tool?.function?.name,
-                    description: tool?.function?.description,
-                    parameters: tool?.function?.parameters
+        // Add tools if available
+        if (tools && tools.length > 0) {
+            // Format tools for Mistral
+            const validTools = tools.map(tool => {
+                // Handle both direct Mistral format and function format
+                if (tool.type === "function" && tool.function) {
+                    return tool;
                 }
-            }));
+                return {
+                    type: "function",
+                    function: {
+                        name: tool.function?.name || tool.name || "",
+                        description: tool.function?.description || tool.description || "",
+                        parameters: tool.function?.parameters || tool.parameters || {}
+                    }
+                };
+            });
+
+            if (validTools.length > 0) {
+                requestBody.tools = validTools;
+                requestBody.tool_choice = "auto";
+            }
         }
 
         return requestBody;

@@ -54,7 +54,7 @@ class WP_Bedrock {
             
             // Enqueue plugin styles
             wp_enqueue_style('wp-bedrock-public', WPBEDROCK_PLUGIN_URL . 'public/css/wp-bedrock-public.css', array(), $this->version);
-            wp_enqueue_style('wp-bedrock-chatbot', WPBEDROCK_PLUGIN_URL . 'admin/css/wp-bedrock-chatbot.css', array(), $this->version);
+            wp_enqueue_style('wp-bedrock-chatbot', WPBEDROCK_PLUGIN_URL . 'admin/css/wp-bedrock-modern-chat.css', array(), $this->version);
             
             // Enqueue plugin scripts in correct order
             wp_enqueue_script('wp-bedrock-api', WPBEDROCK_PLUGIN_URL . 'admin/js/wp-bedrock-api.js', array('jquery'), $this->version, true);
@@ -95,9 +95,12 @@ class WP_Bedrock {
         try {
             check_ajax_referer('wpbedrock_chat_nonce', 'nonce');
 
-            // Get request parameters
-            $request_body = json_decode(stripslashes($_POST['requestBody'] ?? '{}'), true);
-            $stream = isset($_GET['stream']) && $_GET['stream'] === '1';
+            // Get request parameters with proper sanitization
+            $request_body = isset($_POST['requestBody']) ? 
+                json_decode(stripslashes(sanitize_textarea_field($_POST['requestBody'])), true) : 
+                array();
+                
+            $stream = isset($_GET['stream']) && sanitize_text_field($_GET['stream']) === '1';
 
             if (empty($request_body)) {
                 throw new \Exception('Invalid request body', 'INVALID_REQUEST');
@@ -132,7 +135,7 @@ class WP_Bedrock {
 
                 // Stream response
                 $aws_client->invoke_model($request_body, $model_id, true, function($event) {
-                    echo "data: " . json_encode($event) . "\n\n";
+                    echo "data: " . wp_json_encode($event) . "\n\n";
                     flush();
                 });
 
@@ -151,7 +154,7 @@ class WP_Bedrock {
             ];
 
             if (isset($stream) && $stream) {
-                echo "data: " . json_encode($error_response) . "\n\n";
+                echo "data: " . wp_json_encode($error_response) . "\n\n";
                 exit;
             } else {
                 wp_send_json_error($error_response);

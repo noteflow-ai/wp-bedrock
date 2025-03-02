@@ -101,7 +101,7 @@ class BedrockChatManager {
             .append(
                 $('<div>')
                     .addClass('message-content')
-                    .html(isError ? this.responseHandler.formatErrorMessage(content) : this.formatMessage(content))
+                    .html(isError ? this.responseHandler.formatErrorMessage(content) : this.formatMessage(content, this.config.default_model))
             );
 
         // Add loading class if this is a loading message
@@ -135,11 +135,11 @@ class BedrockChatManager {
     }
 
     // Format message content using BedrockAPI
-    formatMessage(content) {
+    formatMessage(content, modelId) {
         // Remove any existing loading messages before formatting message
         this.elements.messagesContainer.find('.loading-message').remove();
         
-        return BedrockAPI.formatMessageContent(content, this.md);
+        return BedrockAPI.formatMessageContent(content, this.md, modelId);
     }
 
     // Copy message to clipboard
@@ -160,6 +160,29 @@ class BedrockChatManager {
             setTimeout(() => notification.remove(), 2000);
         } catch (error) {
             console.error('[BedrockChatManager] Copy to clipboard error:', error);
+        }
+    }
+
+    // Show text preview
+    showTextPreview(content) {
+        if (!this.elements.textPreview || !this.elements.previewContent) {
+            console.warn('[BedrockChatManager] Text preview elements not found');
+            return;
+        }
+        
+        this.elements.previewContent.html(content);
+        this.elements.textPreview.removeClass('hidden');
+    }
+
+    // Hide text preview
+    hideTextPreview() {
+        if (!this.elements.textPreview) {
+            return;
+        }
+        
+        this.elements.textPreview.addClass('hidden');
+        if (this.elements.previewContent) {
+            this.elements.previewContent.html('');
         }
     }
 
@@ -230,19 +253,22 @@ class BedrockChatManager {
             if (lastHistoryMessage && lastHistoryMessage.role === 'assistant') {
                 lastHistoryMessage.content = [{ 
                     type: 'text', 
-                    text: currentText + content 
+                    text: currentText + content || ';' // Ensure non-empty content
                 }];
             }
-        } else if (content) { // Create new message for non-streaming or new streaming message
-            // Create new message
-            const message = this.createMessageElement(role, content);
+        } else { // Create new message for non-streaming or new streaming message
+            // Create new message if there's content or it's a required message
+            const message = this.createMessageElement(role, content || ';');
             this.elements.messagesContainer.append(message);
             
             // Only add to history if we have at least one user message
             if (this.messageHistory.some(msg => msg.role === 'user')) {
                 this.messageHistory.push({
                     role: role,
-                    content: [{ type: 'text', text: content }]
+                    content: [{ 
+                        type: 'text', 
+                        text: content || ';' // Ensure non-empty content
+                    }]
                 });
             }
         }
@@ -254,68 +280,243 @@ class BedrockChatManager {
         console.log('[BedrockChatManager] Tool call:', toolCall);
         
         const toolCallId = `call_${Date.now()}`;
+        const modelId = this.config.default_model;
+        const isMistral = modelId.includes('mistral.mistral');
+        const isClaude = modelId.includes('anthropic.claude');
+        const isNova = modelId.includes('amazon.nova');
+
+        // First add the tool call to history
+        if (isClaude) {
+            this.messageHistory.push({
+                role: 'assistant',
+                content: [{
+                    type: 'tool_use',
+                    id: toolCallId,
+                    name: toolCall.name,
+                    input: typeof toolCall.arguments === 'string' ? 
+                        JSON.parse(toolCall.arguments) : 
+                        toolCall.arguments
+                }]
+            });
+        } else if (isMistral) {
+            this.messageHistory.push({
+                role: 'assistant',
+                content: '',
+                tool_calls: [{
+                    id: toolCallId,
+                    function: {
+                        name: toolCall.name,
+                        arguments: typeof toolCall.arguments === 'string' ? 
+                            toolCall.arguments : 
+                            JSON.stringify(toolCall.arguments)
+                    }
+                }]
+            });
+        } else if (isNova) {
+            this.messageHistory.push({
+                role: 'assistant',
+                content: [{
+                    toolUse: {
+                        toolUseId: toolCallId,
+                        name: toolCall.name,
+                        input: typeof toolCall.arguments === 'string' ? 
+                            JSON.parse(toolCall.arguments) : 
+                            toolCall.arguments
+                    }
+                }]
+            });
+        }
         
         try {
+            // Create and display tool call message
+            const toolCallMessage = this.createMessageElement('tool', {
+                type: 'tool_call',
+                name: toolCall.name,
+                arguments: toolCall.arguments
+            });
+            this.elements.messagesContainer.append(toolCallMessage);
+            this.scrollToBottom();
+
+            // Add a loading message while executing tool
+            const loadingMessage = this.createMessageElement(
+                'assistant',
+                'Searching...'
+            );
+            this.elements.messagesContainer.append(loadingMessage);
+            this.scrollToBottom();
+
             let result;
             try {
-                // Execute tool call silently
+                // Execute tool call
                 result = await this.executeToolCall(toolCall.name, toolCall.arguments);
+
+                // Remove loading message
+                loadingMessage.remove();
+
+                // Format result based on tool type
+                if (toolCall.name === 'arxiv_search') {
+                    result = {
+                        type: 'search_results',
+                        query: toolCall.arguments.search_query,
+                        results: result.map(paper => ({
+                            title: paper.title,
+                            snippet: paper.summary,
+                            url: paper.pdf_url || paper.url,
+                            time: new Date(paper.published).toLocaleDateString()
+                        }))
+                    };
+                }
+
+                // Create and display tool result message
+                const toolResultMessage = this.createMessageElement('tool', {
+                    type: 'tool_result',
+                    name: toolCall.name,
+                    output: result
+                });
+                this.elements.messagesContainer.append(toolResultMessage);
+                this.scrollToBottom();
+
+                // Add tool result to history
+                if (isClaude) {
+                    this.messageHistory.push({
+                        role: 'user',
+                        content: [{
+                            type: 'tool_result',
+                            tool_use_id: toolCallId,
+                            content: result
+                        }]
+                    });
+                } else if (isMistral) {
+                    this.messageHistory.push({
+                        role: 'tool',
+                        tool_call_id: toolCallId,
+                        content: typeof result === 'string' ? 
+                            result : JSON.stringify(result)
+                    });
+                } else if (isNova) {
+                    this.messageHistory.push({
+                        role: 'user',
+                        content: [{
+                            toolResult: {
+                                toolUseId: toolCallId,
+                                content: [{
+                                    json: {
+                                        content: result
+                                    }
+                                }]
+                            }
+                        }]
+                    });
+                }
+
+                // Get model's response to tool result
+                const requestBody = BedrockAPI.formatRequestBody(
+                    this.messageHistory,
+                    {
+                        model: this.config.default_model,
+                        temperature: Number(this.config.default_temperature || 0.7),
+                        max_tokens: 2000,
+                        top_p: 0.9,
+                        anthropic_version: "bedrock-2023-05-31"
+                    },
+                    this.selectedTools
+                );
+
+                // Add a loading message while waiting for response
+                const thinkingMessage = this.createMessageElement(
+                    'assistant',
+                    'Thinking...'
+                );
+                this.elements.messagesContainer.append(thinkingMessage);
+                this.scrollToBottom();
+
+                // Send non-streaming request
+                const response = await this.sendNonStreamingRequest(requestBody);
+                
+                // Remove thinking message before handling response
+                thinkingMessage.remove();
+                
+                await this.handleResponse(response, false);
+
             } catch (error) {
+                // Remove loading message
+                loadingMessage.remove();
+
                 // If tool execution fails, create an error result
                 result = {
                     error: true,
                     message: error.message || 'Tool execution failed'
                 };
-            }
-            
-            // Format tool result for Claude
-            const formattedResult = {
-                role: 'user',
-                content: [{
+
+                // Display error message
+                const errorMessage = this.createMessageElement('tool', {
                     type: 'tool_result',
-                    tool_use_id: toolCallId,
-                    content: result.error ? 
-                        { error: result.message } : 
-                        result // Pass the entire result object
-                }]
-            };
+                    name: toolCall.name,
+                    output: { error: error.message }
+                });
+                this.elements.messagesContainer.append(errorMessage);
+                this.scrollToBottom();
 
-            // Add tool result to history
-            this.messageHistory.push(formattedResult);
+                // Add error result to history
+                if (isClaude) {
+                    this.messageHistory.push({
+                        role: 'user',
+                        content: [{
+                            type: 'tool_result',
+                            tool_use_id: toolCallId,
+                            content: { error: error.message }
+                        }]
+                    });
+                } else if (isMistral) {
+                    this.messageHistory.push({
+                        role: 'tool',
+                        tool_call_id: toolCallId,
+                        content: JSON.stringify({ error: error.message })
+                    });
+                } else if (isNova) {
+                    this.messageHistory.push({
+                        role: 'user',
+                        content: [{
+                            toolResult: {
+                                toolUseId: toolCallId,
+                                content: [{
+                                    json: {
+                                        content: { error: error.message }
+                                    }
+                                }]
+                            }
+                        }]
+                    });
+                }
 
-            // Get model's response to tool result
-            const requestBody = BedrockAPI.formatRequestBody(
-                this.messageHistory,
-                {
-                    model: this.config.default_model,
-                    temperature: Number(this.config.default_temperature || 0.7),
-                    max_tokens: 2000,
-                    top_p: 0.9,
-                    anthropic_version: "bedrock-2023-05-31"
-                },
-                this.selectedTools
-            );
-            
-            // Add a loading message while waiting for response
-            const loadingMessage = this.createMessageElement(
-                'assistant',
-                'Thinking...'
-            );
-            this.elements.messagesContainer.append(loadingMessage);
-            this.scrollToBottom();
-            
-            try {
+                // Get model's response to error
+                const requestBody = BedrockAPI.formatRequestBody(
+                    this.messageHistory,
+                    {
+                        model: this.config.default_model,
+                        temperature: Number(this.config.default_temperature || 0.7),
+                        max_tokens: 2000,
+                        top_p: 0.9,
+                        anthropic_version: "bedrock-2023-05-31"
+                    },
+                    this.selectedTools
+                );
+
+                // Add a loading message while waiting for response
+                const thinkingMessage = this.createMessageElement(
+                    'assistant',
+                    'Thinking...'
+                );
+                this.elements.messagesContainer.append(thinkingMessage);
+                this.scrollToBottom();
+
                 // Send non-streaming request
                 const response = await this.sendNonStreamingRequest(requestBody);
                 
-                // Remove loading message before handling response
-                loadingMessage.remove();
+                // Remove thinking message before handling response
+                thinkingMessage.remove();
                 
                 await this.handleResponse(response, false);
-            } catch (error) {
-                // Remove loading message on error
-                loadingMessage.remove();
-                throw error;
             }
 
             this.updateMessageCount();
@@ -331,22 +532,65 @@ class BedrockChatManager {
         console.log('[BedrockChatManager] Tool result:', toolResult);
         
         try {
-            // Only update message history for streaming tool results
-            // Non-streaming tool results are handled by handleToolCall
-            if (toolResult.isStreaming) {
-                const toolCallId = `call_${Date.now()}`;
-                
-                // Add tool result to history silently
-                this.messageHistory.push({
+            const toolCallId = toolResult.tool_call_id || `call_${Date.now()}`;
+            const modelId = this.config.default_model;
+            const isMistral = modelId.includes('mistral.mistral');
+            const isClaude = modelId.includes('anthropic.claude');
+            const isNova = modelId.includes('amazon.nova');
+
+            // Format tool result for message history
+            let formattedResult;
+            if (isClaude) {
+                formattedResult = {
                     role: 'user',
                     content: [{
                         type: 'tool_result',
                         tool_use_id: toolCallId,
-                    content: toolResult.error ? 
-                        { error: toolResult.message } : 
-                        { output: toolResult.output || toolResult.content || toolResult }
+                        content: toolResult.error ? 
+                            { error: toolResult.message } : 
+                            toolResult.output || toolResult.content || toolResult
                     }]
+                };
+            } else if (isMistral) {
+                formattedResult = {
+                    role: 'tool',
+                    tool_call_id: toolCallId,
+                    content: typeof toolResult.output === 'string' ? 
+                        toolResult.output : 
+                        JSON.stringify(toolResult.output || toolResult.content || toolResult)
+                };
+            } else if (isNova) {
+                formattedResult = {
+                    role: 'user',
+                    content: [{
+                        toolResult: {
+                            toolUseId: toolCallId,
+                            content: [{
+                                json: {
+                                    content: toolResult.error ? 
+                                        { error: toolResult.message } : 
+                                        toolResult.output || toolResult.content || toolResult
+                                }
+                            }]
+                        }
+                    }]
+                };
+            }
+
+            // Add formatted result to message history and display in UI
+            if (formattedResult) {
+                this.messageHistory.push(formattedResult);
+                
+                // Create and display tool result message
+                const message = this.createMessageElement('tool', {
+                    type: 'tool_result',
+                    name: toolResult.name || 'Tool Result',
+                    output: toolResult.error ? 
+                        { error: toolResult.message } : 
+                        toolResult.output || toolResult.content || toolResult
                 });
+                this.elements.messagesContainer.append(message);
+                this.scrollToBottom();
 
                 // Get model's response to tool result
                 const requestBody = BedrockAPI.formatRequestBody(
@@ -398,16 +642,53 @@ class BedrockChatManager {
         this.elements.messagesContainer.find('.loading-message').remove();
         
         const type = toolData.type === 'tool_call' ? 'Tool Call' : 'Tool Result';
-        const content = toolData.type === 'tool_call' ? 
-            `Arguments: ${JSON.stringify(toolData.arguments, null, 2)}` :
-            `Result: ${JSON.stringify(toolData.result, null, 2)}`;
+        let content;
+        
+        if (toolData.type === 'tool_call') {
+            const args = typeof toolData.arguments === 'string' ? 
+                JSON.parse(toolData.arguments) : 
+                toolData.arguments;
+            content = `<div class="tool-arguments">
+                <div class="tool-section-header">Arguments:</div>
+                <pre class="tool-code"><code>${JSON.stringify(args, null, 2)}</code></pre>
+            </div>`;
+        } else {
+            // For tool results, look for output in various locations
+            const output = toolData.output || toolData.content?.output || toolData.result || toolData.content;
+            
+            // Handle search results specially
+            if (output?.type === 'search_results' && Array.isArray(output.results)) {
+                content = `<div class="tool-results">
+                    <div class="tool-section-header">Search Results for: "${output.query}"</div>
+                    ${output.results.map(result => `
+                        <div class="search-result">
+                            <div class="result-title">${result.title}</div>
+                            <div class="result-snippet">${result.snippet}</div>
+                            <div class="result-url">${result.url}</div>
+                            ${result.time ? `<div class="result-time">${result.time}</div>` : ''}
+                        </div>
+                    `).join('')}
+                </div>`;
+            } else if (output?.error) {
+                content = `<div class="tool-error">
+                    <div class="tool-section-header">Error:</div>
+                    <pre class="tool-code error"><code>${output.error}</code></pre>
+                </div>`;
+            } else {
+                content = `<div class="tool-results">
+                    <div class="tool-section-header">Result:</div>
+                    <pre class="tool-code"><code>${JSON.stringify(output, null, 2)}</code></pre>
+                </div>`;
+            }
+        }
 
-        return `<div class="tool-message">
+        return `<div class="tool-message ${toolData.type}">
             <div class="tool-header">
+                <span class="tool-icon">${type === 'Tool Call' ? '🔧' : '📋'}</span>
                 <span class="tool-type">${type}</span>
                 <span class="tool-name">${toolData.name}</span>
             </div>
-            <pre class="tool-content"><code>${content}</code></pre>
+            ${content}
         </div>`;
     }
 
@@ -596,10 +877,71 @@ class BedrockChatManager {
             if (!response || !response.success) {
                 throw new Error(response?.data || 'Invalid response from server');
             }
+
+            const modelId = this.config.default_model;
+            const isMistral = modelId.includes('mistral.mistral');
+            const isClaude = modelId.includes('anthropic.claude');
+            const isNova = modelId.includes('amazon.nova');
             
             if (response.data) {
+                // Handle Nova model responses
+                if (isNova && response.data.output?.message) {
+                    const message = response.data.output.message;
+                    
+                    // Process all content items in order
+                    if (Array.isArray(message.content)) {
+                        for (const item of message.content) {
+                            if (item.text) {
+                                // Handle text content
+                                this.handleContent({
+                                    type: 'text',
+                                    content: item.text,
+                                    role: 'assistant'
+                                }, isStreaming);
+                            } else if (item.toolUse) {
+                                // Handle tool use
+                                const toolCallId = `call_${Date.now()}`;
+                                const toolCall = {
+                                    id: toolCallId,
+                                    name: item.toolUse.name,
+                                    arguments: item.toolUse.input
+                                };
+
+                                // Add to message history
+                                this.messageHistory.push({
+                                    role: 'assistant',
+                                    content: [{
+                                        toolUse: {
+                                            toolUseId: toolCallId,
+                                            name: item.toolUse.name,
+                                            input: item.toolUse.input
+                                        }
+                                    }]
+                                });
+
+                                // Execute tool
+                                const result = await this.executeToolCall(toolCall.name, toolCall.arguments);
+
+                                // Add result to history
+                                this.messageHistory.push({
+                                    role: 'user',
+                                    content: [{
+                                        toolResult: {
+                                            toolUseId: toolCallId,
+                                            content: [{
+                                                json: {
+                                                    content: result
+                                                }
+                                            }]
+                                        }
+                                    }]
+                                });
+                            }
+                        }
+                    }
+                }
                 // Handle Claude's array-based content format
-                if (Array.isArray(response.data.content)) {
+                else if (isClaude && Array.isArray(response.data.content)) {
                     for (const item of response.data.content) {
                         if (item.type === 'text') {
                             // Handle text content
@@ -609,47 +951,103 @@ class BedrockChatManager {
                                 role: 'assistant'
                             }, isStreaming);
                         } else if (item.type === 'tool_use') {
-                            await this.handleToolUse(item, response.data._config);
+                            // Handle tool use
+                            const toolCallId = item.id || `call_${Date.now()}`;
+                            const toolCall = {
+                                id: toolCallId,
+                                name: item.name,
+                                arguments: item.input
+                            };
+
+                            // Add to message history
+                            this.messageHistory.push({
+                                role: 'assistant',
+                                content: [{
+                                    type: 'tool_use',
+                                    id: toolCallId,
+                                    name: item.name,
+                                    input: typeof item.input === 'string' ? 
+                                        JSON.parse(item.input) : item.input
+                                }]
+                            });
+
+                            // Execute tool
+                            const result = await this.executeToolCall(toolCall.name, toolCall.arguments);
+
+                            // Add result to history
+                            this.messageHistory.push({
+                                role: 'user',
+                                content: [{
+                                    type: 'tool_result',
+                                    tool_use_id: toolCallId,
+                                    content: result
+                                }]
+                            });
                         }
                     }
-                    this.updateMessageCount();
-                    if (!isStreaming) {
-                        this.setProcessingState(false);
-                    }
-                    this.scrollToBottom();
-                    return;
                 }
+                // Handle Mistral responses
+                else if (isMistral && response.data.tool_calls) {
+                    for (const tool of response.data.tool_calls) {
+                        // Handle tool use
+                        const toolCallId = tool.id || `call_${Date.now()}`;
+                        const toolCall = {
+                            id: toolCallId,
+                            name: tool.function.name,
+                            arguments: tool.function.arguments
+                        };
 
-                // Handle single tool use response
-                if (response.data.type === 'tool_use') {
-                    await this.handleToolUse(response.data, response.data._config);
-                    return;
+                        // Add to message history
+                        this.messageHistory.push({
+                            role: 'assistant',
+                            content: '',
+                            tool_calls: [{
+                                id: toolCallId,
+                                function: {
+                                    name: tool.function.name,
+                                    arguments: typeof tool.function.arguments === 'string' ? 
+                                        tool.function.arguments : 
+                                        JSON.stringify(tool.function.arguments)
+                                }
+                            }]
+                        });
+
+                        // Execute tool
+                        const result = await this.executeToolCall(toolCall.name, toolCall.arguments);
+
+                        // Add result to history
+                        this.messageHistory.push({
+                            role: 'tool',
+                            tool_call_id: toolCallId,
+                            content: typeof result === 'string' ? 
+                                result : JSON.stringify(result)
+                        });
+                    }
                 }
-                
                 // Handle regular content responses
-                let content = '';
-                
-                // Extract content based on model type
-                if (response.data.output?.message) {
-                    content = response.data.output.message.content?.[0]?.text || '';
-                } else if (response.data.generation) {
-                    content = response.data.generation;
-                } else if (response.data.choices?.[0]?.message?.content) {
-                    content = response.data.choices[0].message.content;
-                } else if (response.data.content && !Array.isArray(response.data.content)) {
-                    content = response.data.content;
-                }
-                
-                if (content) {
-                    this.handleContent({
-                        type: 'text',
-                        content: content,
-                        role: 'assistant'
-                    }, isStreaming);
-                    this.updateMessageCount();
+                else {
+                    let content = '';
+                    
+                    // Extract content based on model type
+                    if (response.data.generation) {
+                        content = response.data.generation;
+                    } else if (response.data.choices?.[0]?.message?.content) {
+                        content = response.data.choices[0].message.content;
+                    } else if (response.data.content && !Array.isArray(response.data.content)) {
+                        content = response.data.content;
+                    }
+                    
+                    if (content) {
+                        this.handleContent({
+                            type: 'text',
+                            content: content,
+                            role: 'assistant'
+                        }, isStreaming);
+                    }
                 }
             }
             
+            this.updateMessageCount();
             if (!isStreaming) {
                 this.setProcessingState(false);
             }
@@ -707,21 +1105,35 @@ class BedrockChatManager {
         const isClaude = modelId.includes('anthropic.claude');
         const isNova = modelId.includes('amazon.nova');
 
-        // Add tool result to history based on model type
+        // Add tool call and result to history based on model type
         if (isClaude) {
-            this.messageHistory.push({
-                role: 'user',
-                content: [{
-                    type: 'tool_result',
-                    tool_use_id: toolCallId,
-                    content: toolResult
-                }]
-            });
-        } else if (isMistral) {
+            // Format for Claude
             this.messageHistory.push(
                 {
                     role: 'assistant',
-                    content: 'Using tool: ' + toolName,
+                    content: [{
+                        type: 'tool_use',
+                        id: toolCallId,
+                        name: toolName,
+                        input: typeof toolInput === 'string' ? 
+                            JSON.parse(toolInput) : toolInput
+                    }]
+                },
+                {
+                    role: 'user',
+                    content: [{
+                        type: 'tool_result',
+                        tool_use_id: toolCallId,
+                        content: toolResult
+                    }]
+                }
+            );
+        } else if (isMistral) {
+            // Format for Mistral
+            this.messageHistory.push(
+                {
+                    role: 'assistant',
+                    content: '',
                     tool_calls: [{
                         id: toolCallId,
                         function: {
@@ -734,19 +1146,20 @@ class BedrockChatManager {
                 {
                     role: 'tool',
                     tool_call_id: toolCallId,
-                    content: JSON.stringify(toolResult)
+                    content: typeof toolResult === 'string' ? 
+                        toolResult : JSON.stringify(toolResult)
                 }
             );
         } else if (isNova) {
+            // Format for Nova
             this.messageHistory.push(
                 {
                     role: 'assistant',
                     content: [{
-                        text: 'Using tool: ' + toolName,
                         toolUse: {
                             toolUseId: toolCallId,
                             name: toolName,
-                            input: typeof toolInput === 'string' ?
+                            input: typeof toolInput === 'string' ? 
                                 JSON.parse(toolInput) : toolInput
                         }
                     }]
@@ -754,7 +1167,6 @@ class BedrockChatManager {
                 {
                     role: 'user',
                     content: [{
-                        text: 'Tool result:',
                         toolResult: {
                             toolUseId: toolCallId,
                             content: [{
@@ -844,11 +1256,27 @@ class BedrockChatManager {
         // Remove any existing loading messages before executing tool
         this.elements.messagesContainer.find('.loading-message').remove();
         
-                // Get tool configuration
-                const normalizedToolName = toolName.toLowerCase().replace(/[^a-z0-9]/g, '_');
-                const toolConfig = window.wpbedrock_tools?.tools?.find(tool => 
-                    tool.info.title.toLowerCase().replace(/[^a-z0-9]/g, '_') === normalizedToolName
-                );
+        // Get tool configuration
+        const normalizedToolName = toolName.toLowerCase().replace(/[^a-z0-9]/g, '_');
+        const toolConfig = window.wpbedrock_tools?.tools?.find(tool => 
+            tool.info.title.toLowerCase().replace(/[^a-z0-9]/g, '_') === normalizedToolName
+        );
+
+        // Format args based on tool type
+        if (normalizedToolName === 'arxiv_search') {
+            // Format arXiv search query
+            const query = typeof args === 'string' ? args : 
+                args.search_query || args.q || args.query || args.text || 
+                (typeof args === 'object' && Object.values(args)[0]) || 'GPT';
+            
+            // Add default parameters for arXiv search
+            args = {
+                search_query: `ti:"${query}" OR abs:"${query}"`,
+                sortBy: 'lastUpdatedDate',
+                sortOrder: 'descending',
+                max_results: 5
+            };
+        }
 
         if (!toolConfig) {
             throw new Error(`Tool ${toolName} not found in configuration`);
@@ -935,10 +1363,11 @@ class BedrockChatManager {
             // Add additional parameters for DuckDuckGo Lite
             if (normalizedToolName === 'duckduckgo lite') {
                 // Only add required parameters as defined in tools.json
-                formattedArgs.q = argsObj.q;
+                formattedArgs.q = encodeURIComponent(argsObj.q);
                 formattedArgs.o = 'json';
                 formattedArgs.api = 'd.js';
                 formattedArgs.s = '0';
+                formattedArgs.kl = 'wt-wt'; // Worldwide results
             }
 
             // Ensure all required parameters are present
@@ -995,15 +1424,29 @@ class BedrockChatManager {
                 tempDiv.innerHTML = result;
                 
                 // Extract search results
-                const searchResults = Array.from(tempDiv.querySelectorAll('.result')).map(result => ({
-                    title: result.querySelector('.result__title')?.textContent?.trim() || '',
-                    snippet: result.querySelector('.result__snippet')?.textContent?.trim() || '',
-                    url: result.querySelector('.result__url')?.textContent?.trim() || ''
-                }));
+                const searchResults = Array.from(tempDiv.querySelectorAll('.result')).map(result => {
+                    const titleElem = result.querySelector('.result__title');
+                    const snippetElem = result.querySelector('.result__snippet');
+                    const urlElem = result.querySelector('.result__url');
+                    const timeElem = result.querySelector('.result__timestamp');
+                    
+                    return {
+                        title: titleElem?.textContent?.trim() || '',
+                        snippet: snippetElem?.textContent?.trim() || '',
+                        url: urlElem?.textContent?.trim() || '',
+                        time: timeElem?.textContent?.trim() || ''
+                    };
+                });
+                
+                // Filter out empty results and limit to top 5 most relevant
+                const filteredResults = searchResults
+                    .filter(r => r.title && r.snippet)
+                    .slice(0, 5);
                 
                 result = {
-                    results: searchResults,
-                    type: 'search_results'
+                    results: filteredResults,
+                    type: 'search_results',
+                    query: decodeURIComponent(argsObj.q)
                 };
             }
         } else if (typeof result === 'string') {
@@ -1087,13 +1530,17 @@ class BedrockChatManager {
                 }
             };
         } else if (isNova) {
-            // Nova format
+            // Nova format - ensure proper structure
             normalizedTool = {
                 toolSpec: {
                     name: toolName,
                     description: toolDefinition.info.description || '',
                     inputSchema: {
-                        json: parameters
+                        json: {
+                            type: "object",
+                            properties: parameters.properties || {},
+                            required: parameters.required || []
+                        }
                     }
                 }
             };
@@ -1107,12 +1554,19 @@ class BedrockChatManager {
             };
         }
         
-        const index = this.selectedTools.findIndex(t => t.name === normalizedTool.name);
+        // For Nova, we need to find by toolSpec.name
+        const index = isNova ? 
+            this.selectedTools.findIndex(t => t.toolSpec?.name === normalizedTool.toolSpec?.name) :
+            this.selectedTools.findIndex(t => t.name === normalizedTool.name);
+
         if (index === -1) {
             this.selectedTools.push(normalizedTool);
         } else {
             this.selectedTools.splice(index, 1);
         }
+
+        // Log selected tools for debugging
+        console.log('[BedrockChatManager] Selected tools:', this.selectedTools);
     }
 
     buildToolParameters(toolDefinition) {

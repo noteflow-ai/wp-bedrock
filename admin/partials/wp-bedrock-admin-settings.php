@@ -104,7 +104,7 @@ if (!defined('ABSPATH')) exit;
                     <tr valign="top">
                         <th scope="row">Default System Prompt</th>
                         <td>
-                            <textarea name="wpbedrock_system_prompt" rows="4" class="large-text" style="font-family: monospace;"><?php echo esc_textarea(get_option('wpbedrock_system_prompt', 'You are a helpful AI assistant. Respond to user queries in a clear and concise manner.')); ?></textarea>
+                            <textarea name="wpbedrock_system_prompt" rows="4" class="large-text code"><?php echo esc_textarea(get_option('wpbedrock_system_prompt', 'You are a helpful AI assistant. Respond to user queries in a clear and concise manner.')); ?></textarea>
                             <p class="description">Define the AI's default behavior and role</p>
                         </td>
                     </tr>
@@ -134,7 +134,7 @@ if (!defined('ABSPATH')) exit;
                         <td>
                             <label>
                                 <input type="checkbox" name="wpbedrock_enable_stream" value="1" <?php checked(get_option('wpbedrock_enable_stream', '1'), '1'); ?> />
-                                Show responses as they are generated
+                                <?php esc_html_e('Show responses as they are generated', 'wp-bedrock'); ?>
                             </label>
                             <p class="description">Provides a more interactive experience</p>
                         </td>
@@ -146,59 +146,3 @@ if (!defined('ABSPATH')) exit;
         <?php submit_button(); ?>
     </form>
 </div>
-
-<style>
-.wp-bedrock-settings-container {
-    max-width: 1200px;
-}
-
-.settings-section {
-    background: #fff;
-    border: 1px solid #ccd0d4;
-    border-radius: 4px;
-    padding: 20px;
-    margin-bottom: 20px;
-}
-
-.settings-section h2 {
-    margin-top: 0;
-    padding-bottom: 12px;
-    border-bottom: 1px solid #eee;
-}
-
-.temperature-control {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    max-width: 300px;
-}
-
-.temperature-slider {
-    flex-grow: 1;
-}
-
-.temperature-value {
-    min-width: 40px;
-    text-align: center;
-}
-
-/* Responsive table layout */
-@media screen and (max-width: 782px) {
-    .form-table td {
-        padding: 15px 10px;
-    }
-    
-    .form-table th {
-        padding: 15px 10px 5px;
-    }
-}
-</style>
-
-<script>
-jQuery(document).ready(function($) {
-    // Temperature slider
-    $('.temperature-slider').on('input', function() {
-        $(this).next('.temperature-value').text(this.value);
-    });
-});
-</script>

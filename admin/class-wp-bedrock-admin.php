@@ -94,34 +94,91 @@ class WP_Bedrock_Admin {
 
     public function register_settings() {
         // AWS Settings
-        register_setting('wp-bedrock_settings', 'wpbedrock_aws_key');
-        register_setting('wp-bedrock_settings', 'wpbedrock_aws_secret');
-        register_setting('wp-bedrock_settings', 'wpbedrock_aws_region');
+        register_setting('wp-bedrock_settings', 'wpbedrock_aws_key', array(
+            'type' => 'string',
+            'sanitize_callback' => 'sanitize_text_field'
+        ));
+        register_setting('wp-bedrock_settings', 'wpbedrock_aws_secret', array(
+            'type' => 'string',
+            'sanitize_callback' => 'sanitize_text_field'
+        ));
+        register_setting('wp-bedrock_settings', 'wpbedrock_aws_region', array(
+            'type' => 'string',
+            'sanitize_callback' => 'sanitize_text_field'
+        ));
 
         // Chat Settings
-        register_setting('wp-bedrock_settings', 'wpbedrock_model_id');
-        register_setting('wp-bedrock_settings', 'wpbedrock_temperature');
-        register_setting('wp-bedrock_settings', 'wpbedrock_system_prompt');
-        register_setting('wp-bedrock_settings', 'wpbedrock_chat_initial_message');
-        register_setting('wp-bedrock_settings', 'wpbedrock_chat_placeholder');
-        register_setting('wp-bedrock_settings', 'wpbedrock_enable_stream');
-        register_setting('wp-bedrock_settings', 'wpbedrock_context_length');
+        register_setting('wp-bedrock_settings', 'wpbedrock_model_id', array(
+            'type' => 'string',
+            'sanitize_callback' => 'sanitize_text_field'
+        ));
+        register_setting('wp-bedrock_settings', 'wpbedrock_temperature', array(
+            'type' => 'number',
+            'sanitize_callback' => array($this, 'sanitize_float')
+        ));
+        register_setting('wp-bedrock_settings', 'wpbedrock_system_prompt', array(
+            'type' => 'string',
+            'sanitize_callback' => 'sanitize_textarea_field'
+        ));
+        register_setting('wp-bedrock_settings', 'wpbedrock_chat_initial_message', array(
+            'type' => 'string',
+            'sanitize_callback' => 'sanitize_textarea_field'
+        ));
+        register_setting('wp-bedrock_settings', 'wpbedrock_chat_placeholder', array(
+            'type' => 'string',
+            'sanitize_callback' => 'sanitize_text_field'
+        ));
+        register_setting('wp-bedrock_settings', 'wpbedrock_enable_stream', array(
+            'type' => 'boolean',
+            'sanitize_callback' => array($this, 'sanitize_boolean')
+        ));
+        register_setting('wp-bedrock_settings', 'wpbedrock_context_length', array(
+            'type' => 'integer',
+            'sanitize_callback' => 'absint'
+        ));
 
         // Image Settings
-        register_setting('wp-bedrock_settings', 'wpbedrock_image_model_id');
-        register_setting('wp-bedrock_settings', 'wpbedrock_image_width');
-        register_setting('wp-bedrock_settings', 'wpbedrock_image_height');
-        register_setting('wp-bedrock_settings', 'wpbedrock_image_steps');
-        register_setting('wp-bedrock_settings', 'wpbedrock_image_cfg_scale');
-        register_setting('wp-bedrock_settings', 'wpbedrock_image_style_preset');
-        register_setting('wp-bedrock_settings', 'wpbedrock_image_negative_prompt');
-        register_setting('wp-bedrock_settings', 'wpbedrock_image_quality');
+        register_setting('wp-bedrock_settings', 'wpbedrock_image_model_id', array(
+            'type' => 'string',
+            'sanitize_callback' => 'sanitize_text_field'
+        ));
+        register_setting('wp-bedrock_settings', 'wpbedrock_image_width', array(
+            'type' => 'integer',
+            'sanitize_callback' => 'absint'
+        ));
+        register_setting('wp-bedrock_settings', 'wpbedrock_image_height', array(
+            'type' => 'integer',
+            'sanitize_callback' => 'absint'
+        ));
+        register_setting('wp-bedrock_settings', 'wpbedrock_image_steps', array(
+            'type' => 'integer',
+            'sanitize_callback' => 'absint'
+        ));
+        register_setting('wp-bedrock_settings', 'wpbedrock_image_cfg_scale', array(
+            'type' => 'number',
+            'sanitize_callback' => array($this, 'sanitize_float')
+        ));
+        register_setting('wp-bedrock_settings', 'wpbedrock_image_style_preset', array(
+            'type' => 'string',
+            'sanitize_callback' => 'sanitize_text_field'
+        ));
+        register_setting('wp-bedrock_settings', 'wpbedrock_image_negative_prompt', array(
+            'type' => 'string',
+            'sanitize_callback' => 'sanitize_textarea_field'
+        ));
+        register_setting('wp-bedrock_settings', 'wpbedrock_image_quality', array(
+            'type' => 'string',
+            'sanitize_callback' => 'sanitize_text_field'
+        ));
     }
 
     public function enqueue_styles() {
         $screen = get_current_screen();
         if (strpos($screen->id, 'wp-bedrock') !== false) {
             wp_enqueue_style('dashicons');
+            wp_enqueue_style('wp-jquery-ui-dialog');
+            
+            // Core admin styles
             wp_enqueue_style(
                 $this->plugin_name,
                 plugin_dir_url(__FILE__) . 'css/wp-bedrock-admin.css',
@@ -129,10 +186,39 @@ class WP_Bedrock_Admin {
                 $this->version,
                 'all'
             );
+            
+            // Tools styles
+            wp_enqueue_style(
+                $this->plugin_name . '-tools',
+                plugin_dir_url(__FILE__) . 'css/wp-bedrock-tools.css',
+                array('dashicons'),
+                $this->version,
+                'all'
+            );
+            
+            // Chatbot styles
             wp_enqueue_style(
                 $this->plugin_name . '-chatbot',
-                plugin_dir_url(__FILE__) . 'css/wp-bedrock-chatbot.css',
+                plugin_dir_url(__FILE__) . 'css/wp-bedrock-modern-chat.css',
                 array('dashicons'),
+                $this->version,
+                'all'
+            );
+            
+            // Previously inline styles
+            wp_enqueue_style(
+                $this->plugin_name . '-inline',
+                plugin_dir_url(__FILE__) . 'css/wp-bedrock-inline.css',
+                array('dashicons', 'wp-jquery-ui-dialog'),
+                $this->version,
+                'all'
+            );
+            
+            // GitHub theme for code highlighting
+            wp_enqueue_style(
+                $this->plugin_name . '-github',
+                plugin_dir_url(__FILE__) . 'css/github.min.css',
+                array(),
                 $this->version,
                 'all'
             );
@@ -145,9 +231,9 @@ class WP_Bedrock_Admin {
             return;
         }
 
-        // Base admin script
+        // Base admin scripts
         wp_enqueue_script(
-            $this->plugin_name,
+            $this->plugin_name . '-admin',
             plugin_dir_url(__FILE__) . 'js/wp-bedrock-admin.js',
             array('jquery'),
             $this->version,
@@ -206,11 +292,19 @@ class WP_Bedrock_Admin {
         check_ajax_referer('wpbedrock_chat_nonce', 'nonce');
         
         try {
-            // Convert stream parameter to boolean
-            if (isset($_REQUEST['stream'])) {
-                $_REQUEST['stream'] = $_REQUEST['stream'] === '1';
+            // Sanitize request data
+            $request_data = array();
+            if (isset($_REQUEST['requestBody'])) {
+                $request_data['requestBody'] = sanitize_textarea_field($_REQUEST['requestBody']);
             }
-            $result = $this->get_aws_client()->handle_chat_message($_REQUEST);
+            if (isset($_REQUEST['model_id'])) {
+                $request_data['model_id'] = sanitize_text_field($_REQUEST['model_id']);
+            }
+            if (isset($_REQUEST['stream'])) {
+                $request_data['stream'] = sanitize_text_field($_REQUEST['stream']) === '1' ? '1' : '0';
+            }
+            
+            $result = $this->get_aws_client()->handle_chat_message($request_data);
             if ($result['success']) {
                 wp_send_json_success($result['data']);
             } else {
@@ -310,7 +404,9 @@ class WP_Bedrock_Admin {
         try {
             $url = sanitize_url($_REQUEST['url'] ?? '');
             $method = strtoupper(sanitize_text_field($_REQUEST['method'] ?? 'GET'));
-            $params = $_REQUEST['params'] ?? [];
+            
+            // Sanitize params array recursively
+            $params = isset($_REQUEST['params']) ? $this->sanitize_array_recursive($_REQUEST['params']) : [];
 
             if (empty($url)) {
                 throw new Exception('URL is required');
@@ -511,6 +607,105 @@ class WP_Bedrock_Admin {
     }
 
     public function display_image_page() {
+        // Enqueue required styles
+        wp_enqueue_style(
+            $this->plugin_name . '-tools',
+            plugin_dir_url(__FILE__) . 'css/wp-bedrock-tools.css',
+            array(),
+            $this->version,
+            'all'
+        );
+
+        // Load image models and style presets
+        $image_models = array(
+            array(
+                'id' => 'amazon.titan-image-generator-v1',
+                'name' => 'Titan Image Generator v1',
+                'type' => 'bedrock-titan'
+            ),
+            array(
+                'id' => 'stability.stable-diffusion-xl-v1',
+                'name' => 'Stable Diffusion XL v1',
+                'type' => 'bedrock-sd'
+            )
+        );
+
+        $style_presets = array(
+            'none' => __('None', 'wp-bedrock'),
+            'photographic' => __('Photographic', 'wp-bedrock'),
+            'digital-art' => __('Digital Art', 'wp-bedrock'),
+            'comic-book' => __('Comic Book', 'wp-bedrock'),
+            'fantasy-art' => __('Fantasy Art', 'wp-bedrock'),
+            'line-art' => __('Line Art', 'wp-bedrock'),
+            'analog-film' => __('Analog Film', 'wp-bedrock'),
+            'cinematic' => __('Cinematic', 'wp-bedrock'),
+            'enhance' => __('Enhance', 'wp-bedrock'),
+            'pixel-art' => __('Pixel Art', 'wp-bedrock'),
+            'anime' => __('Anime', 'wp-bedrock')
+        );
+
         include_once('partials/wp-bedrock-admin-image.php');
+    }
+
+    /**
+     * Sanitize a float value
+     *
+     * @param mixed $value The value to sanitize
+     * @return float Sanitized float value
+     */
+    public function sanitize_float($value) {
+        return filter_var($value, FILTER_SANITIZE_NUMBER_FLOAT, FILTER_FLAG_ALLOW_FRACTION);
+    }
+
+    /**
+     * Sanitize a boolean value
+     *
+     * @param mixed $value The value to sanitize
+     * @return bool Sanitized boolean value
+     */
+    public function sanitize_boolean($value) {
+        return filter_var($value, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    /**
+     * Recursively sanitize an array of values
+     *
+     * @param array $array The array to sanitize
+     * @return array The sanitized array
+     */
+    private function sanitize_array_recursive($array) {
+        $sanitized = array();
+        
+        foreach ($array as $key => $value) {
+            // Sanitize the key
+            $clean_key = sanitize_text_field($key);
+            
+            if (is_array($value)) {
+                // Recursively sanitize nested arrays
+                $sanitized[$clean_key] = $this->sanitize_array_recursive($value);
+            } else if (is_object($value)) {
+                // Convert objects to arrays and sanitize
+                $sanitized[$clean_key] = $this->sanitize_array_recursive((array)$value);
+            } else {
+                // Sanitize scalar values
+                if (is_numeric($value)) {
+                    // Preserve numeric types
+                    $sanitized[$clean_key] = is_float($value) ? 
+                        $this->sanitize_float($value) : 
+                        absint($value);
+                } else if (is_bool($value)) {
+                    // Preserve boolean types
+                    $sanitized[$clean_key] = $this->sanitize_boolean($value);
+                } else if (is_string($value) && strlen($value) > 255) {
+                    // Use textarea sanitization for longer strings
+                    $sanitized[$clean_key] = sanitize_textarea_field($value);
+                } else {
+                    // Default to text field sanitization
+                    $sanitized[$clean_key] = sanitize_text_field($value);
+                }
+            }
+        }
+        
+        return $sanitized;
     }
 }
