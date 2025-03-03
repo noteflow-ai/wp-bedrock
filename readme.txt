@@ -4,7 +4,7 @@ Tags: ai, chatbot, amazon, bedrock, claude, streaming
 Requires at least: 5.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.0.1
+Stable tag: 1.0.2
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
@@ -127,6 +127,10 @@ Use the [bedrock_chat] shortcode in your page or post content where you want the
 
 == Changelog ==
 
+= 1.0.2 =
+* Updated plugin version for WordPress.org submission
+* Minor bug fixes and improvements
+
 = 1.0.1 =
 * Added shortcode support [bedrock_chat]
 * Added widget support for sidebar integration
@@ -141,6 +145,9 @@ Use the [bedrock_chat] shortcode in your page or post content where you want the
 * Configurable AWS and chat settings
 
 == Upgrade Notice ==
+
+= 1.0.2 =
+Updated version with minor bug fixes and improvements.
 
 = 1.0.1 =
 Added shortcode and widget support for flexible chatbot integration.

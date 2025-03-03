@@ -5,7 +5,7 @@
  * @wordpress-plugin
  * Plugin Name:       AI Chat for Amazon Bedrock
  * Description:       WordPress plugin for Amazon Bedrock AI integration with conversation support
- * Version:          1.0.1
+ * Version:          1.0.2
  * Author:           glay
  * License:          GPL-2.0+
  * License URI:      http://www.gnu.org/licenses/gpl-2.0.txt
@@ -19,7 +19,7 @@ if (!defined('WPINC')) {
 }
 
 // Define plugin constants
-define('WPBEDROCK_VERSION', '1.0.1');
+define('WPBEDROCK_VERSION', '1.0.2');
 define('WPBEDROCK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('WPBEDROCK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
