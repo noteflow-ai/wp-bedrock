@@ -5,8 +5,8 @@ class WP_Bedrock_Widget extends \WP_Widget {
     public function __construct() {
         parent::__construct(
             'wp_bedrock_widget',
-            __('AI Chat Widget', 'bedrock-ai-chat'),
-            array('description' => __('Add an AI chatbot to your sidebar', 'bedrock-ai-chat'))
+            __('AI Chat Widget', 'ai-chat-for-amazon-bedrock'),
+            array('description' => __('Add an AI chatbot to your sidebar', 'ai-chat-for-amazon-bedrock'))
         );
     }
 
@@ -31,11 +31,11 @@ class WP_Bedrock_Widget extends \WP_Widget {
         $height = !empty($instance['height']) ? $instance['height'] : '500px';
         ?>
         <p>
-            <label for="<?php echo esc_attr($this->get_field_id('title')); ?>"><?php esc_html_e('Title:', 'bedrock-ai-chat'); ?></label>
+            <label for="<?php echo esc_attr($this->get_field_id('title')); ?>"><?php esc_html_e('Title:', 'ai-chat-for-amazon-bedrock'); ?></label>
             <input class="widefat" id="<?php echo esc_attr($this->get_field_id('title')); ?>" name="<?php echo esc_attr($this->get_field_name('title')); ?>" type="text" value="<?php echo esc_attr($title); ?>">
         </p>
         <p>
-            <label for="<?php echo esc_attr($this->get_field_id('height')); ?>"><?php esc_html_e('Height:', 'bedrock-ai-chat'); ?></label>
+            <label for="<?php echo esc_attr($this->get_field_id('height')); ?>"><?php esc_html_e('Height:', 'ai-chat-for-amazon-bedrock'); ?></label>
             <input class="widefat" id="<?php echo esc_attr($this->get_field_id('height')); ?>" name="<?php echo esc_attr($this->get_field_name('height')); ?>" type="text" value="<?php echo esc_attr($height); ?>" placeholder="500px">
         </p>
         <?php
@@ -43,8 +43,8 @@ class WP_Bedrock_Widget extends \WP_Widget {
 
     public function update($new_instance, $old_instance) {
         $instance = array();
-        $instance['title'] = (!empty($new_instance['title'])) ? strip_tags($new_instance['title']) : '';
-        $instance['height'] = (!empty($new_instance['height'])) ? strip_tags($new_instance['height']) : '500px';
+        $instance['title'] = (!empty($new_instance['title'])) ? wp_strip_all_tags($new_instance['title']) : '';
+        $instance['height'] = (!empty($new_instance['height'])) ? wp_strip_all_tags($new_instance['height']) : '500px';
         return $instance;
     }
 }

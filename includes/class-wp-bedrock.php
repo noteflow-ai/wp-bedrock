@@ -26,6 +26,8 @@ class WP_Bedrock {
         add_action('wp_ajax_nopriv_wpbedrock_chat', array($this, 'handle_chat_request'));
         
         // Register shortcode
+        add_shortcode('ai_chat_for_amazon_bedrock', array($this, 'render_chatbot'));
+        // Keep the old shortcode for backward compatibility
         add_shortcode('bedrock_chat', array($this, 'render_chatbot'));
         
         // Register widget
@@ -40,6 +42,7 @@ class WP_Bedrock {
     public function enqueue_public_assets() {
         // Only load if shortcode is present or widget is active
         if (is_active_widget(false, false, 'wp_bedrock_widget') || 
+            has_shortcode(get_post_field('post_content', get_the_ID()), 'ai_chat_for_amazon_bedrock') ||
             has_shortcode(get_post_field('post_content', get_the_ID()), 'bedrock_chat')) {
             
             // Enqueue jQuery UI

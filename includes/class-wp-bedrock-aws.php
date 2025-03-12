@@ -282,7 +282,7 @@ class WP_Bedrock_AWS {
                 if ($e->getMessage() === 'HTTP Error: 429') {
                     $delay = $this->retry_delay * pow(2, $attempt - 1);
                     // Add jitter to prevent thundering herd
-                    $jitter_amount = $delay * $this->jitter * (rand(0, 100) / 100);
+                    $jitter_amount = $delay * $this->jitter * (wp_rand(0, 100) / 100);
                     $final_delay = $delay + $jitter_amount;
                     
                     $this->log_debug("Rate limited. Retrying in {$final_delay} seconds");

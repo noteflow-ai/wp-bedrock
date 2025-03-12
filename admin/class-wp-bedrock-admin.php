@@ -417,7 +417,7 @@ class WP_Bedrock_Admin {
             
             // Get the path and operation from the URL
             $server_url = rtrim($tool['servers'][0]['url'], '/');
-            $request_path = parse_url($url, PHP_URL_PATH);
+            $request_path = wp_parse_url($url, PHP_URL_PATH);
             
             // Find matching path and method from tool definition
             $matching_path = null;

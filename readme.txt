@@ -1,10 +1,10 @@
 === AI Chat for Amazon Bedrock ===
-Contributors: glay
-Tags: ai, chatbot, amazon, bedrock, claude, streaming
+Contributors: glay, glayguo
+Tags: ai, chatbot, amazon, bedrock, claude
 Requires at least: 5.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.0.2
+Stable tag: 1.0.3
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
@@ -70,7 +70,7 @@ We're actively working on exciting new features:
 
 Add the chatbot to any post or page using the shortcode:
 
-[bedrock_chat]
+[ai_chat_for_amazon_bedrock]
 
 Optional parameters:
 * height: Set the chat window height (default: 500px)
@@ -127,12 +127,20 @@ Use the [bedrock_chat] shortcode in your page or post content where you want the
 
 == Changelog ==
 
-= 1.0.2 =
+= 1.0.3 =
 * Updated plugin version for WordPress.org submission
+* Fixed text domain to match plugin slug
+* Added new shortcode [ai_chat_for_amazon_bedrock] (old shortcode [bedrock_chat] still works)
+* Renamed main plugin file to ai-chat-for-amazon-bedrock.php (backward compatibility maintained)
+* Fixed escaping issues for better security
+* Replaced deprecated functions with WordPress recommended alternatives
 * Minor bug fixes and improvements
 
 = 1.0.1 =
-* Added shortcode support [bedrock_chat]
+* Added shortcode support [ai_chat_for_amazon_bedrock]
+
+You can also use the old shortcode for backward compatibility:
+[bedrock_chat]
 * Added widget support for sidebar integration
 * Updated plugin name to comply with WordPress.org trademark guidelines
 
@@ -146,8 +154,8 @@ Use the [bedrock_chat] shortcode in your page or post content where you want the
 
 == Upgrade Notice ==
 
-= 1.0.2 =
-Updated version with minor bug fixes and improvements.
+= 1.0.3 =
+Updated version with improved WordPress.org compatibility, security fixes, and code improvements.
 
 = 1.0.1 =
 Added shortcode and widget support for flexible chatbot integration.
