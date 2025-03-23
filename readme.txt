@@ -1,5 +1,5 @@
 === AI Chat for Amazon Bedrock ===
-Contributors: glay, glayguo
+Contributors: glayguo
 Tags: ai, chatbot, amazon, bedrock, claude
 Requires at least: 5.0
 Tested up to: 6.7
@@ -29,7 +29,7 @@ AI Chat for Amazon Bedrock brings the power of Amazon Bedrock's AI models to you
   * Context length adjustment
 * Multiple integration options:
   * Admin dashboard interface
-  * Shortcode [bedrock_chat] for pages and posts
+  * Shortcode [ai_chat_for_amazon_bedrock] for pages and posts
   * Widget for sidebars and widget areas
 
 = Roadmap =
@@ -58,7 +58,7 @@ We're actively working on exciting new features:
 
 == Installation ==
 
-1. Upload the `wp-bedrock` folder to the `/wp-content/plugins/` directory
+1. Upload the `ai-chat-for-amazon-bedrock` folder to the `/wp-content/plugins/` directory
 2. Run `composer install` in the plugin directory to install dependencies
 3. Activate the plugin through the 'Plugins' menu in WordPress
 4. Go to AI Chat for Amazon Bedrock > Settings to configure your AWS credentials:
@@ -77,7 +77,7 @@ Optional parameters:
 * width: Set the chat window width (default: 100%)
 
 Example:
-[bedrock_chat height="600px" width="800px"]
+[ai_chat_for_amazon_bedrock height="600px" width="800px"]
 
 = Using the Widget =
 
@@ -115,7 +115,7 @@ Yes, you can use the AI Chat Widget to add the chatbot to any widget area in you
 
 = How do I add the chatbot to a specific page? =
 
-Use the [bedrock_chat] shortcode in your page or post content where you want the chatbot to appear.
+Use the [ai_chat_for_amazon_bedrock] shortcode in your page or post content where you want the chatbot to appear.
 
 == Screenshots ==
 

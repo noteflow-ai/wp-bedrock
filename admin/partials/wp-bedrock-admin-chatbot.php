@@ -2,7 +2,7 @@
 if (!defined('ABSPATH')) exit;
 ?>
 <div class="wrap">
-    <h1><?php esc_html_e('AI Chat', 'wp-bedrock'); ?></h1>
+    <h1><?php esc_html_e('AI Chat', 'ai-chat-for-amazon-bedrock'); ?></h1>
     
     <div class="wp-bedrock-settings-container">
         <div class="settings-section">
@@ -10,8 +10,8 @@ if (!defined('ABSPATH')) exit;
                 <div class="chat-main">
                     <div class="chat-header">
                         <div>
-                            <span class="chat-title"><?php esc_html_e('New Conversation', 'wp-bedrock'); ?></span>
-                            <span class="message-count"><?php esc_html_e('0 messages', 'wp-bedrock'); ?></span>
+                            <span class="chat-title"><?php esc_html_e('New Conversation', 'ai-chat-for-amazon-bedrock'); ?></span>
+                            <span class="message-count"><?php esc_html_e('0 messages', 'ai-chat-for-amazon-bedrock'); ?></span>
                         </div>
                         <div class="chat-actions">
                             <button id="refresh-chat" class="button" title="<?php esc_attr_e('Refresh', 'wp-bedrock'); ?>">

@@ -7,7 +7,7 @@
  * @subpackage WP_Bedrock/includes
  */
 
-namespace WPBEDROCK;
+namespace AICHAT_AMAZON_BEDROCK;
 
 class WP_Bedrock_Loader {
 

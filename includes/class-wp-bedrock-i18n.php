@@ -10,7 +10,7 @@
  * @subpackage WP_Bedrock/includes
  */
 
-namespace WPBEDROCK;
+namespace AICHAT_AMAZON_BEDROCK;
 
 class WP_Bedrock_i18n {
 
@@ -21,7 +21,7 @@ class WP_Bedrock_i18n {
      */
     public function load_plugin_textdomain() {
         load_plugin_textdomain(
-            'wp-bedrock',
+            'ai-chat-for-amazon-bedrock',
             false,
             dirname(dirname(plugin_basename(__FILE__))) . '/languages/'
         );

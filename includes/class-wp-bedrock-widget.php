@@ -1,29 +1,29 @@
 <?php
-namespace WPBEDROCK;
+namespace AICHAT_AMAZON_BEDROCK;
 
 class WP_Bedrock_Widget extends \WP_Widget {
     public function __construct() {
         parent::__construct(
             'wp_bedrock_widget',
-            __('AI Chat Widget', 'ai-chat-for-amazon-bedrock'),
-            array('description' => __('Add an AI chatbot to your sidebar', 'ai-chat-for-amazon-bedrock'))
+            esc_html__('AI Chat Widget', 'ai-chat-for-amazon-bedrock'),
+            array('description' => esc_html__('Add an AI chatbot to your sidebar', 'ai-chat-for-amazon-bedrock'))
         );
     }
 
     public function widget($args, $instance) {
-        echo $args['before_widget'];
+        echo wp_kses_post($args['before_widget']);
         
         if (!empty($instance['title'])) {
-            echo $args['before_title'] . apply_filters('widget_title', $instance['title']) . $args['after_title'];
+            echo wp_kses_post($args['before_title'] . apply_filters('widget_title', $instance['title']) . $args['after_title']);
         }
 
         // Get height from instance or use default
-        $height = !empty($instance['height']) ? $instance['height'] : '500px';
+        $height = !empty($instance['height']) ? esc_attr($instance['height']) : '500px';
         
         // Include the chatbot template with custom height
-        include WPBEDROCK_PLUGIN_DIR . 'admin/partials/wp-bedrock-admin-chatbot.php';
+        include AICHAT_BEDROCK_PLUGIN_DIR . 'admin/partials/wp-bedrock-admin-chatbot.php';
         
-        echo $args['after_widget'];
+        echo wp_kses_post($args['after_widget']);
     }
 
     public function form($instance) {

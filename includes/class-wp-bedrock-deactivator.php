@@ -1,5 +1,5 @@
 <?php
-namespace WPBEDROCK;
+namespace AICHAT_AMAZON_BEDROCK;
 
 /**
  * Fired during plugin deactivation

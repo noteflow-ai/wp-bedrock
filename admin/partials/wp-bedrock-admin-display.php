@@ -68,7 +68,7 @@ if (!defined('ABSPATH')) {
             printf(
                 /* translators: %s: Version number */
                 esc_html__('Current Version: %s', 'ai-chat-for-amazon-bedrock'), 
-                '<strong>' . esc_html(WPBEDROCK_VERSION) . '</strong>'
+                '<strong>' . esc_html(AICHAT_BEDROCK_VERSION) . '</strong>'
             ); 
             ?>
         </p>

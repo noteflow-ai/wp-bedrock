@@ -1,5 +1,5 @@
 <?php
-namespace WPBEDROCK;
+namespace AICHAT_AMAZON_BEDROCK;
 
 use Exception;
 
@@ -127,7 +127,7 @@ class WP_Bedrock_AWS {
     }
 
     private function sign_request($method, $url, $body, $is_streaming = false) {
-        $parsed_url = parse_url($url);
+        $parsed_url = wp_parse_url($url);
         $now = gmdate('Ymd\THis\Z');
         $date_stamp = substr($now, 0, 8);
         

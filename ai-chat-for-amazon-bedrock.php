@@ -35,17 +35,17 @@ if (file_exists($composer_autoload)) {
 }
 
 // Load AWS Bedrock client if not exists
-if (!class_exists('\\WPBEDROCK\\WP_Bedrock_AWS')) {
+if (!class_exists('\\AICHAT_AMAZON_BEDROCK\\WP_Bedrock_AWS')) {
     require_once AICHAT_BEDROCK_PLUGIN_DIR . 'includes/class-wp-bedrock-aws.php';
 }
 
 /**
  * The code that runs during plugin activation
  */
-function activate_ai_chat_for_amazon_bedrock() {
+function aichat_bedrock_activate() {
     try {
         require_once AICHAT_BEDROCK_PLUGIN_DIR . 'includes/class-wp-bedrock-activator.php';
-        WPBEDROCK\WP_Bedrock_Activator::activate();
+        AICHAT_AMAZON_BEDROCK\WP_Bedrock_Activator::activate();
     } catch (\Exception $e) {
         error_log('AI Chat for Amazon Bedrock activation error: ' . $e->getMessage());
     }
@@ -54,15 +54,15 @@ function activate_ai_chat_for_amazon_bedrock() {
 /**
  * The code that runs during plugin deactivation
  */
-function deactivate_ai_chat_for_amazon_bedrock() {
+function aichat_bedrock_deactivate() {
     require_once AICHAT_BEDROCK_PLUGIN_DIR . 'includes/class-wp-bedrock-deactivator.php';
-    WPBEDROCK\WP_Bedrock_Deactivator::deactivate();
+    AICHAT_AMAZON_BEDROCK\WP_Bedrock_Deactivator::deactivate();
 }
 
 /**
  * The code that runs during plugin uninstall
  */
-function uninstall_ai_chat_for_amazon_bedrock() {
+function aichat_bedrock_uninstall() {
     global $wpdb;
     
     // Check if this is the last instance of the plugin
@@ -81,9 +81,9 @@ function uninstall_ai_chat_for_amazon_bedrock() {
     if ($bedrock_plugins == 1) {
         // Clean up database tables
         $tables = [
-            $wpdb->prefix . 'wpbedrock',
-            $wpdb->prefix . 'wpbedrock_conversations',
-            $wpdb->prefix . 'wpbedrock_messages'
+            $wpdb->prefix . 'aichat_bedrock',
+            $wpdb->prefix . 'aichat_bedrock_conversations',
+            $wpdb->prefix . 'aichat_bedrock_messages'
         ];
         
         foreach ($tables as $table) {
@@ -93,21 +93,21 @@ function uninstall_ai_chat_for_amazon_bedrock() {
 }
 
 // Register hooks
-register_activation_hook(__FILE__, 'activate_ai_chat_for_amazon_bedrock');
-register_deactivation_hook(__FILE__, 'deactivate_ai_chat_for_amazon_bedrock');
-register_uninstall_hook(__FILE__, 'uninstall_ai_chat_for_amazon_bedrock');
+register_activation_hook(__FILE__, 'aichat_bedrock_activate');
+register_deactivation_hook(__FILE__, 'aichat_bedrock_deactivate');
+register_uninstall_hook(__FILE__, 'aichat_bedrock_uninstall');
 
 // For backward compatibility
 function activate_wp_bedrock() {
-    activate_ai_chat_for_amazon_bedrock();
+    aichat_bedrock_activate();
 }
 
 function deactivate_wp_bedrock() {
-    deactivate_ai_chat_for_amazon_bedrock();
+    aichat_bedrock_deactivate();
 }
 
 function uninstall_wp_bedrock() {
-    uninstall_ai_chat_for_amazon_bedrock();
+    aichat_bedrock_uninstall();
 }
 
 /**
@@ -118,14 +118,14 @@ require_once AICHAT_BEDROCK_PLUGIN_DIR . 'includes/class-wp-bedrock.php';
 /**
  * Begins execution of the plugin
  */
-function run_ai_chat_for_amazon_bedrock() {
-    $plugin = new WPBEDROCK\WP_Bedrock();
+function aichat_bedrock_run() {
+    $plugin = new AICHAT_AMAZON_BEDROCK\WP_Bedrock();
     $plugin->run();
 }
 
-run_ai_chat_for_amazon_bedrock();
+aichat_bedrock_run();
 
 // For backward compatibility
 function run_wp_bedrock() {
-    run_ai_chat_for_amazon_bedrock();
+    aichat_bedrock_run();
 }

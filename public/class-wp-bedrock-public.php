@@ -7,7 +7,7 @@
  * @subpackage WP_Bedrock/public
  */
 
-namespace WPBEDROCK;
+namespace AICHAT_AMAZON_BEDROCK;
 
 class WP_Bedrock_Public {
 
@@ -44,8 +44,10 @@ class WP_Bedrock_Public {
         add_action('wp_enqueue_scripts', array($this, 'enqueue_styles'));
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
         
-        // 添加shortcode
-        add_shortcode('wp_bedrock', array($this, 'render_shortcode'));
+        // Add shortcodes
+        add_shortcode('ai_chat_for_amazon_bedrock', array($this, 'render_shortcode'));
+        // Backward compatibility shortcode
+        add_shortcode('bedrock_chat', array($this, 'render_shortcode'));
     }
 
     /**
@@ -89,7 +91,7 @@ class WP_Bedrock_Public {
     }
 
     /**
-     * Render the shortcode [wp_bedrock]
+     * Render the shortcode [ai_chat_for_amazon_bedrock]
      *
      * @since    1.0.0
      * @param    array    $atts    Shortcode attributes
@@ -102,7 +104,7 @@ class WP_Bedrock_Public {
                 'title' => 'AI Chat for Amazon Bedrock',
             ),
             $atts,
-            'wp_bedrock'
+            'ai_chat_for_amazon_bedrock'
         );
 
         // 开始输出缓冲

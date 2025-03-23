@@ -1,5 +1,5 @@
 <?php
-namespace WPBEDROCK;
+namespace AICHAT_AMAZON_BEDROCK;
 
 class WP_Bedrock {
     private $plugin_name;
@@ -7,8 +7,8 @@ class WP_Bedrock {
     private $admin;
 
     public function __construct() {
-        $this->plugin_name = 'wp-bedrock';
-        $this->version = WPBEDROCK_VERSION;
+        $this->plugin_name = 'ai-chat-for-amazon-bedrock';
+        $this->version = AICHAT_BEDROCK_VERSION;
         $this->load_dependencies();
         $this->setup_hooks();
     }
@@ -22,6 +22,10 @@ class WP_Bedrock {
 
     private function setup_hooks() {
         // Ajax handlers
+        add_action('wp_ajax_aichat_bedrock_chat', array($this, 'handle_chat_request'));
+        add_action('wp_ajax_nopriv_aichat_bedrock_chat', array($this, 'handle_chat_request'));
+        
+        // For backward compatibility
         add_action('wp_ajax_wpbedrock_chat', array($this, 'handle_chat_request'));
         add_action('wp_ajax_nopriv_wpbedrock_chat', array($this, 'handle_chat_request'));
         
@@ -32,7 +36,7 @@ class WP_Bedrock {
         
         // Register widget
         add_action('widgets_init', function() {
-            register_widget('WPBEDROCK\\WP_Bedrock_Widget');
+            register_widget('AICHAT_AMAZON_BEDROCK\\WP_Bedrock_Widget');
         });
 
         // Frontend scripts and styles
@@ -51,23 +55,37 @@ class WP_Bedrock {
             wp_enqueue_style('wp-jquery-ui-dialog');
             
             // Enqueue markdown-it and highlight.js
-            wp_enqueue_script('markdown-it', WPBEDROCK_PLUGIN_URL . 'admin/js/markdown-it.min.js', array(), $this->version, true);
-            wp_enqueue_script('highlight-js', WPBEDROCK_PLUGIN_URL . 'admin/js/highlight.min.js', array(), $this->version, true);
-            wp_enqueue_style('github-css', WPBEDROCK_PLUGIN_URL . 'admin/css/github.min.css', array(), $this->version);
+            wp_enqueue_script('markdown-it', AICHAT_BEDROCK_PLUGIN_URL . 'admin/js/markdown-it.min.js', array(), $this->version, true);
+            wp_enqueue_script('highlight-js', AICHAT_BEDROCK_PLUGIN_URL . 'admin/js/highlight.min.js', array(), $this->version, true);
+            wp_enqueue_style('github-css', AICHAT_BEDROCK_PLUGIN_URL . 'admin/css/github.min.css', array(), $this->version);
             
             // Enqueue plugin styles
-            wp_enqueue_style('wp-bedrock-public', WPBEDROCK_PLUGIN_URL . 'public/css/wp-bedrock-public.css', array(), $this->version);
-            wp_enqueue_style('wp-bedrock-chatbot', WPBEDROCK_PLUGIN_URL . 'admin/css/wp-bedrock-modern-chat.css', array(), $this->version);
+            wp_enqueue_style('aichat-bedrock-public', AICHAT_BEDROCK_PLUGIN_URL . 'public/css/wp-bedrock-public.css', array(), $this->version);
+            wp_enqueue_style('aichat-bedrock-chatbot', AICHAT_BEDROCK_PLUGIN_URL . 'admin/css/wp-bedrock-modern-chat.css', array(), $this->version);
             
             // Enqueue plugin scripts in correct order
-            wp_enqueue_script('wp-bedrock-api', WPBEDROCK_PLUGIN_URL . 'admin/js/wp-bedrock-api.js', array('jquery'), $this->version, true);
-            wp_enqueue_script('wp-bedrock-response-handler', WPBEDROCK_PLUGIN_URL . 'admin/js/wp-bedrock-response-handler.js', array('jquery', 'markdown-it', 'highlight-js'), $this->version, true);
-            wp_enqueue_script('wp-bedrock-chat-manager', WPBEDROCK_PLUGIN_URL . 'admin/js/wp-bedrock-chat-manager.js', array('jquery', 'wp-bedrock-api'), $this->version, true);
-            wp_enqueue_script('wp-bedrock-chatbot', WPBEDROCK_PLUGIN_URL . 'admin/js/wp-bedrock-chatbot.js', array('jquery', 'jquery-ui-dialog', 'wp-bedrock-chat-manager', 'wp-bedrock-response-handler'), $this->version, true);
-            wp_enqueue_script('wp-bedrock-public', WPBEDROCK_PLUGIN_URL . 'public/js/wp-bedrock-public.js', array('wp-bedrock-chatbot'), $this->version, true);
+            wp_enqueue_script('aichat-bedrock-api', AICHAT_BEDROCK_PLUGIN_URL . 'admin/js/wp-bedrock-api.js', array('jquery'), $this->version, true);
+            wp_enqueue_script('aichat-bedrock-response-handler', AICHAT_BEDROCK_PLUGIN_URL . 'admin/js/wp-bedrock-response-handler.js', array('jquery', 'markdown-it', 'highlight-js'), $this->version, true);
+            wp_enqueue_script('aichat-bedrock-chat-manager', AICHAT_BEDROCK_PLUGIN_URL . 'admin/js/wp-bedrock-chat-manager.js', array('jquery', 'aichat-bedrock-api'), $this->version, true);
+            wp_enqueue_script('aichat-bedrock-chatbot', AICHAT_BEDROCK_PLUGIN_URL . 'admin/js/wp-bedrock-chatbot.js', array('jquery', 'jquery-ui-dialog', 'aichat-bedrock-chat-manager', 'aichat-bedrock-response-handler'), $this->version, true);
+            wp_enqueue_script('aichat-bedrock-public', AICHAT_BEDROCK_PLUGIN_URL . 'public/js/wp-bedrock-public.js', array('aichat-bedrock-chatbot'), $this->version, true);
             
             // Localize script
-            wp_localize_script('wp-bedrock-chatbot', 'wpbedrock', array(
+            wp_localize_script('aichat-bedrock-chatbot', 'aichat_bedrock', array(
+                'ajaxurl' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('aichat_bedrock_chat_nonce'),
+                'initial_message' => get_option('aichat_bedrock_chat_initial_message', 'Hello! How can I help you today?'),
+                'placeholder' => get_option('aichat_bedrock_chat_placeholder', 'Type your message here...'),
+                'enable_stream' => get_option('aichat_bedrock_enable_stream', '1') === '1',
+                'default_model' => get_option('aichat_bedrock_model_id', 'anthropic.claude-3-haiku-20240307-v1:0'),
+                'default_temperature' => floatval(get_option('aichat_bedrock_temperature', '0.7')),
+                'default_system_prompt' => get_option('aichat_bedrock_system_prompt', 'You are a helpful AI assistant.'),
+                'plugin_url' => AICHAT_BEDROCK_PLUGIN_URL,
+                'tools' => json_decode(file_get_contents(plugin_dir_path(__FILE__) . 'tools.json'), true)
+            ));
+            
+            // For backward compatibility
+            wp_localize_script('aichat-bedrock-chatbot', 'wpbedrock', array(
                 'ajaxurl' => admin_url('admin-ajax.php'),
                 'nonce' => wp_create_nonce('wpbedrock_chat_nonce'),
                 'initial_message' => get_option('wpbedrock_chat_initial_message', 'Hello! How can I help you today?'),
@@ -90,13 +108,23 @@ class WP_Bedrock {
         ), $atts);
 
         ob_start();
-        include WPBEDROCK_PLUGIN_DIR . 'admin/partials/wp-bedrock-admin-chatbot.php';
+        include AICHAT_BEDROCK_PLUGIN_DIR . 'admin/partials/wp-bedrock-admin-chatbot.php';
         return ob_get_clean();
     }
 
     public function handle_chat_request() {
         try {
-            check_ajax_referer('wpbedrock_chat_nonce', 'nonce');
+            // Check for both new and old nonces for backward compatibility
+            if (isset($_POST['nonce'])) {
+                $nonce = sanitize_text_field($_POST['nonce']);
+                if (wp_verify_nonce($nonce, 'aichat_bedrock_chat_nonce') || wp_verify_nonce($nonce, 'wpbedrock_chat_nonce')) {
+                    // Nonce is valid
+                } else {
+                    throw new \Exception('Invalid security token', 'SECURITY_ERROR');
+                }
+            } else {
+                throw new \Exception('Security token missing', 'SECURITY_ERROR');
+            }
 
             // Get request parameters with proper sanitization
             $request_body = isset($_POST['requestBody']) ? 
@@ -110,9 +138,9 @@ class WP_Bedrock {
             }
 
             // Initialize AWS client
-            $aws_key = get_option('wpbedrock_aws_key');
-            $aws_secret = get_option('wpbedrock_aws_secret');
-            $aws_region = get_option('wpbedrock_aws_region');
+            $aws_key = get_option('aichat_bedrock_aws_key', get_option('wpbedrock_aws_key'));
+            $aws_secret = get_option('aichat_bedrock_aws_secret', get_option('wpbedrock_aws_secret'));
+            $aws_region = get_option('aichat_bedrock_aws_region', get_option('wpbedrock_aws_region'));
 
             if (!$aws_key || !$aws_secret || !$aws_region) {
                 throw new \Exception('AWS credentials not configured', 'CONFIG_ERROR');
@@ -121,7 +149,7 @@ class WP_Bedrock {
             $aws_client = new WP_Bedrock_AWS($aws_key, $aws_secret, $aws_region);
 
             // Get model ID from settings
-            $model_id = get_option('wpbedrock_model_id');
+            $model_id = get_option('aichat_bedrock_model_id', get_option('wpbedrock_model_id'));
             if (!$model_id) {
                 throw new \Exception('Model ID not configured', 'CONFIG_ERROR');
             }

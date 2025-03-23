@@ -7,7 +7,7 @@
  * @subpackage WP_Bedrock/admin
  */
 
-namespace WPBEDROCK;
+namespace AICHAT_AMAZON_BEDROCK;
 
 use Exception;
 
